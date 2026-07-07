@@ -319,6 +319,11 @@
 
     <div class="metric-cards" id="metric-cards"></div>
 
+    <div class="chart-box" id="explainer-box" style="border-color:var(--brass-dim);">
+      <div style="font-size:11px;letter-spacing:0.06em;color:var(--brass);text-transform:uppercase;margin-bottom:10px;">In plain terms</div>
+      <div id="plain-explainer" style="font-size:14px;line-height:1.65;color:var(--text);"></div>
+    </div>
+
     <div class="chart-box"><canvas id="resultChart" height="120"></canvas></div>
 
     <div id="confusion-wrap" class="hidden">
@@ -345,6 +350,7 @@
         <svg class="crosshair" width="34" height="34" viewBox="0 0 34 34"><circle cx="17" cy="17" r="12" fill="none" stroke="#C08552" stroke-width="1.3"/><circle cx="17" cy="17" r="4" fill="none" stroke="#C08552" stroke-width="1.3"/><line x1="17" y1="0" x2="17" y2="8" stroke="#C08552" stroke-width="1.3"/><line x1="17" y1="26" x2="17" y2="34" stroke="#C08552" stroke-width="1.3"/><line x1="0" y1="17" x2="8" y2="17" stroke="#C08552" stroke-width="1.3"/><line x1="26" y1="17" x2="34" y2="17" stroke="#C08552" stroke-width="1.3"/></svg>
         <div class="rlabel">Predicted output</div>
         <div class="rval" id="readout-val">—</div>
+        <div class="small-note" id="readout-note" style="margin-top:8px;"></div>
       </div>
     </div>
 
@@ -518,6 +524,20 @@ function normalizeCell(v){
   return typeof v === 'string' ? v.trim().replace(/\s+/g,' ') : v;
 }
 
+// Math.min(...largeArray) / Math.max(...largeArray) throws a silent stack
+// overflow once an array gets into the tens of thousands of elements — a
+// real risk with retail/transaction-scale CSVs. This loop-based version has
+// no such limit.
+function minMax(arr){
+  let min = Infinity, max = -Infinity;
+  for (let i=0;i<arr.length;i++){
+    const v = arr[i];
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  return {min, max};
+}
+
 function shuffle(arr){
   const a = arr.slice();
   for(let i=a.length-1;i>0;i--){
@@ -616,7 +636,7 @@ function profileColumns(){
       unique: uniq,
       isIdLike: uniq === values.length && values.length > 5,
       isConstant: uniq <= 1,
-      highCardinality: det.type === 'categorical' && uniq > 20 && uniq > values.length*0.3
+      highCardinality: det.type === 'categorical' && (uniq > 30 || uniq > values.length*0.3)
     };
     if (det.type === 'numeric'){
       const nums = values.filter(v=>!isMissing(v)).map(parseLooseNumber).filter(n=>!Number.isNaN(n));
@@ -837,16 +857,20 @@ function updateTaskNote(auto){
 
 // Warns when one class dominates the target column — a model can look
 // "accurate" while just always predicting the majority class.
-function checkClassImbalance(){
+function getMajorityClass(){
   const vals = state.cleanedRows.map(r=>String(r[state.target]));
   const counts = {};
   vals.forEach(v=>counts[v]=(counts[v]||0)+1);
   const total = vals.length;
   const entries = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
   const [topLabel, topCount] = entries[0];
-  const topFrac = topCount/total;
+  return {topLabel, topFrac: topCount/total, numClasses: entries.length};
+}
+
+function checkClassImbalance(){
+  const {topLabel, topFrac, numClasses} = getMajorityClass();
   const note = document.getElementById('imbalance-note');
-  if (topFrac > 0.8 && entries.length > 1){
+  if (topFrac > 0.8 && numClasses > 1){
     note.textContent = `⚠ Class imbalance: "${topLabel}" makes up ${(topFrac*100).toFixed(0)}% of rows. A model that always guesses "${topLabel}" would already score ${(topFrac*100).toFixed(0)}% accuracy without learning anything — treat the accuracy metric on the Impact page with that in mind.`;
   } else {
     note.textContent = '';
@@ -886,7 +910,7 @@ function buildEncoder(colName, rows){
   const raw = rows.map(r=>r[colName]);
   if (type === 'numeric' || type === 'date'){
     const nums = type === 'date' ? raw.map(v=>new Date(v).getTime()) : raw.map(v=>parseLooseNumber(v));
-    const min = Math.min(...nums), max = Math.max(...nums);
+    const {min, max} = minMax(nums);
     return {type:'numeric', min, max, encode:(v)=>{
       const n = type==='date' ? new Date(v).getTime() : parseLooseNumber(v);
       return max>min ? (n-min)/(max-min) : 0;
@@ -957,7 +981,7 @@ async function trainTabular(epochs, testFrac){
     yTest = testIdx.map(i=>oneHot[i]);
   } else {
     const vals = rows.map(r=>parseLooseNumber(r[state.target]));
-    const min = Math.min(...vals), max = Math.max(...vals);
+    const {min, max} = minMax(vals);
     targetEncoder = {type:'regression', min, max};
     outputUnits = 1;
     lossFn = 'meanSquaredError';
@@ -984,358 +1008,4 @@ async function trainTabular(epochs, testFrac){
   await model.fit(xTrainT, yTrainT, {
     epochs, validationData:[xTestT,yTestT], shuffle:true, verbose:0,
     callbacks:{ onEpochEnd: (epoch, logs)=>{
-      state.history.loss.push(logs.loss);
-      state.history.valLoss.push(logs.val_loss);
-      updateLossChart(epoch, epochs);
-    }}
-  });
-
-  state.model = model;
-  state.testSet = {X:xTest, testIdx, featureCols};
-
-  const predsT = model.predict(xTestT);
-  const preds = await predsT.array();
-
-  computeImpact(preds, testIdx, rows);
-
-  xTrainT.dispose(); yTrainT.dispose(); xTestT.dispose(); yTestT.dispose(); predsT.dispose();
-}
-
-async function trainTimeSeries(epochs, testFrac){
-  const rows = state.cleanedRows;
-  const series = rows.map(r=>parseLooseNumber(r[state.target]));
-  const lag = Math.min(5, Math.max(2, Math.floor(series.length/6)));
-  state.lagCount = lag;
-
-  const min = Math.min(...series), max = Math.max(...series);
-  const norm = series.map(v=> max>min ? (v-min)/(max-min) : 0);
-  state.targetEncoder = {type:'regression', min, max};
-
-  const X = [], y = [];
-  for(let i=lag;i<norm.length;i++){
-    X.push(norm.slice(i-lag,i));
-    y.push([norm[i]]);
-  }
-  const idx = shuffle(X.map((_,i)=>i));
-  const nTest = Math.max(1, Math.round(X.length*testFrac));
-  const testIdx = idx.slice(0,nTest);
-  const trainIdx = idx.slice(nTest);
-
-  const xTrain = trainIdx.map(i=>X[i]), yTrain = trainIdx.map(i=>y[i]);
-  const xTest = testIdx.map(i=>X[i]), yTest = testIdx.map(i=>y[i]);
-
-  const model = tf.sequential();
-  model.add(tf.layers.dense({units:16, activation:'relu', inputShape:[lag]}));
-  model.add(tf.layers.dense({units:8, activation:'relu'}));
-  model.add(tf.layers.dense({units:1, activation:'linear'}));
-  model.compile({optimizer: tf.train.adam(0.01), loss:'meanSquaredError'});
-
-  const xTrainT = tf.tensor2d(xTrain);
-  const yTrainT = tf.tensor2d(yTrain);
-  const xTestT = tf.tensor2d(xTest);
-  const yTestT = tf.tensor2d(yTest);
-
-  await model.fit(xTrainT, yTrainT, {
-    epochs, validationData:[xTestT,yTestT], shuffle:true, verbose:0,
-    callbacks:{ onEpochEnd:(epoch,logs)=>{
-      state.history.loss.push(logs.loss);
-      state.history.valLoss.push(logs.val_loss);
-      updateLossChart(epoch, epochs);
-    }}
-  });
-
-  state.model = model;
-  state.featureCols = Array.from({length:lag}, (_,i)=>`lag_${lag-i}`);
-  state.seriesNorm = norm;
-  state.seriesRaw = series;
-
-  const predsT = model.predict(xTestT);
-  const preds = await predsT.array();
-  const actualRaw = testIdx.map(i=> series[i+lag]);
-  const predRaw = preds.map(p=> p[0]*(max-min)+min);
-
-  const ssRes = actualRaw.reduce((s,a,i)=>s+(a-predRaw[i])*(a-predRaw[i]),0);
-  const meanA = mean(actualRaw);
-  const ssTot = actualRaw.reduce((s,a)=>s+(a-meanA)*(a-meanA),0);
-  const r2 = ssTot>0 ? 1 - ssRes/ssTot : 0;
-  const rmse = Math.sqrt(ssRes/actualRaw.length);
-
-  state.metrics = {type:'regression', r2, rmse};
-  state.testSet = {actualRaw, predRaw};
-
-  xTrainT.dispose(); yTrainT.dispose(); xTestT.dispose(); yTestT.dispose(); predsT.dispose();
-
-  renderImpactTimeSeries();
-}
-
-/* ---- loss chart ---- */
-
-function setupLossChart(){
-  const ctx = document.getElementById('lossChart').getContext('2d');
-  if (state.lossChart) state.lossChart.destroy();
-  state.lossChart = new Chart(ctx, {
-    type:'line',
-    data:{labels:[], datasets:[
-      {label:'train loss', data:[], borderColor:'#C08552', backgroundColor:'transparent', tension:0.25, pointRadius:0},
-      {label:'val loss', data:[], borderColor:'#5B7C99', backgroundColor:'transparent', tension:0.25, pointRadius:0}
-    ]},
-    options:{
-      responsive:true, animation:false,
-      scales:{
-        x:{ticks:{color:'#8B93A0',maxTicksLimit:8},grid:{color:'#2E333C'}},
-        y:{ticks:{color:'#8B93A0'},grid:{color:'#2E333C'}}
-      },
-      plugins:{legend:{labels:{color:'#E8E6E1'}}}
-    }
-  });
-}
-function updateLossChart(epoch, totalEpochs){
-  state.lossChart.data.labels.push(epoch+1);
-  state.lossChart.data.datasets[0].data.push(state.history.loss[state.history.loss.length-1]);
-  state.lossChart.data.datasets[1].data.push(state.history.valLoss[state.history.valLoss.length-1]);
-  state.lossChart.update('none');
-  document.getElementById('training-status').innerHTML =
-    `<span class="spinner" style="${epoch+1>=totalEpochs?'display:none;':''}"></span>epoch ${epoch+1} / ${totalEpochs}`;
-}
-
-document.getElementById('btn-to-impact').addEventListener('click', ()=>{
-  goToStage('impact');
-  if (state.taskType !== 'timeseries') renderImpactTabular();
-  renderImportance();
-  renderPredictForm();
-});
-
-/* ============================ STAGE 4: IMPACT ============================ */
-
-function computeImpact(preds, testIdx, rows){
-  if (state.taskType === 'classification'){
-    const cats = state.targetEncoder.categories;
-    const predLabels = preds.map(p=> cats[p.indexOf(Math.max(...p))]);
-    const actualLabels = testIdx.map(i=> String(rows[i][state.target]));
-    let correct=0;
-    const cm = {};
-    cats.forEach(a=>{cm[a]={}; cats.forEach(b=>cm[a][b]=0);});
-    predLabels.forEach((p,i)=>{
-      if (p===actualLabels[i]) correct++;
-      cm[actualLabels[i]][p]++;
-    });
-    state.metrics = {type:'classification', accuracy: correct/predLabels.length, cm, cats};
-    state.testSet.actualLabels = actualLabels;
-    state.testSet.predLabels = predLabels;
-  } else {
-    const {min,max} = state.targetEncoder;
-    const actualRaw = testIdx.map(i=> parseFloat(rows[i][state.target]));
-    const predRaw = preds.map(p=> p[0]*(max-min)+min);
-    const ssRes = actualRaw.reduce((s,a,i)=>s+(a-predRaw[i])*(a-predRaw[i]),0);
-    const meanA = mean(actualRaw);
-    const ssTot = actualRaw.reduce((s,a)=>s+(a-meanA)*(a-meanA),0);
-    const r2 = ssTot>0 ? 1 - ssRes/ssTot : 0;
-    const rmse = Math.sqrt(ssRes/actualRaw.length);
-    state.metrics = {type:'regression', r2, rmse};
-    state.testSet.actualRaw = actualRaw;
-    state.testSet.predRaw = predRaw;
-  }
-}
-
-function renderImpactTabular(){
-  document.getElementById('forecast-controls').classList.add('hidden');
-  document.getElementById('predict-section').classList.remove('hidden');
-  const cardsWrap = document.getElementById('metric-cards');
-  if (state.metrics.type === 'classification'){
-    cardsWrap.innerHTML = `
-      <div class="metric-card"><div class="val">${(state.metrics.accuracy*100).toFixed(1)}%</div><div class="lbl">Accuracy</div></div>
-      <div class="metric-card"><div class="val">${state.metrics.cats.length}</div><div class="lbl">Classes</div></div>
-      <div class="metric-card"><div class="val">${state.testSet.testIdx.length}</div><div class="lbl">Test rows</div></div>
-    `;
-    renderConfusionMatrix();
-    renderClassificationChart();
-  } else {
-    cardsWrap.innerHTML = `
-      <div class="metric-card"><div class="val">${state.metrics.r2.toFixed(3)}</div><div class="lbl">R²</div></div>
-      <div class="metric-card"><div class="val">${state.metrics.rmse.toFixed(2)}</div><div class="lbl">RMSE</div></div>
-      <div class="metric-card"><div class="val">${state.testSet.testIdx.length}</div><div class="lbl">Test rows</div></div>
-    `;
-    document.getElementById('confusion-wrap').classList.add('hidden');
-    renderRegressionChart();
-  }
-}
-
-function renderImpactTimeSeries(){
-  document.getElementById('forecast-controls').classList.remove('hidden');
-  document.getElementById('predict-section').classList.add('hidden');
-  document.getElementById('confusion-wrap').classList.add('hidden');
-  const cardsWrap = document.getElementById('metric-cards');
-  cardsWrap.innerHTML = `
-    <div class="metric-card"><div class="val">${state.metrics.r2.toFixed(3)}</div><div class="lbl">R²</div></div>
-    <div class="metric-card"><div class="val">${state.metrics.rmse.toFixed(2)}</div><div class="lbl">RMSE</div></div>
-    <div class="metric-card"><div class="val">${state.lagCount}</div><div class="lbl">Lag window</div></div>
-  `;
-  renderForecastChart([]);
-  renderImportance();
-}
-
-function renderConfusionMatrix(){
-  const wrap = document.getElementById('confusion-wrap');
-  wrap.classList.remove('hidden');
-  const {cm, cats} = state.metrics;
-  let html = '<thead><tr><th>actual \\ pred</th>' + cats.map(c=>`<th>${c}</th>`).join('') + '</tr></thead><tbody>';
-  cats.forEach(a=>{
-    html += `<tr><th>${a}</th>` + cats.map(b=>{
-      const v = cm[a][b];
-      return `<td class="${a===b?'diag':(v>0?'off':'')}">${v}</td>`;
-    }).join('') + '</tr>';
-  });
-  html += '</tbody>';
-  document.getElementById('cm-table').innerHTML = html;
-}
-
-function renderClassificationChart(){
-  const ctx = document.getElementById('resultChart').getContext('2d');
-  const cats = state.metrics.cats;
-  const counts = cats.map(c=> state.testSet.actualLabels.filter(a=>a===c).length);
-  const correctCounts = cats.map(c=> state.testSet.actualLabels.filter((a,i)=>a===c && state.testSet.predLabels[i]===c).length);
-  if (state.resultChart) state.resultChart.destroy();
-  state.resultChart = new Chart(ctx, {
-    type:'bar',
-    data:{labels:cats, datasets:[
-      {label:'test examples', data:counts, backgroundColor:'#2E333C'},
-      {label:'correctly predicted', data:correctCounts, backgroundColor:'#C08552'}
-    ]},
-    options:{responsive:true, scales:{x:{ticks:{color:'#8B93A0'},grid:{display:false}}, y:{ticks:{color:'#8B93A0'},grid:{color:'#2E333C'}}}, plugins:{legend:{labels:{color:'#E8E6E1'}}}}
-  });
-}
-
-function renderRegressionChart(){
-  const ctx = document.getElementById('resultChart').getContext('2d');
-  const {actualRaw, predRaw} = state.testSet;
-  const points = actualRaw.map((a,i)=>({x:a,y:predRaw[i]}));
-  const lo = Math.min(...actualRaw, ...predRaw), hi = Math.max(...actualRaw, ...predRaw);
-  if (state.resultChart) state.resultChart.destroy();
-  state.resultChart = new Chart(ctx, {
-    type:'scatter',
-    data:{datasets:[
-      {label:'actual vs predicted', data:points, backgroundColor:'#C08552'},
-      {label:'perfect prediction', data:[{x:lo,y:lo},{x:hi,y:hi}], type:'line', borderColor:'#5B7C99', borderDash:[4,4], pointRadius:0, borderWidth:1.5}
-    ]},
-    options:{responsive:true,
-      scales:{x:{title:{display:true,text:'actual',color:'#8B93A0'},ticks:{color:'#8B93A0'},grid:{color:'#2E333C'}},
-               y:{title:{display:true,text:'predicted',color:'#8B93A0'},ticks:{color:'#8B93A0'},grid:{color:'#2E333C'}}},
-      plugins:{legend:{labels:{color:'#E8E6E1'}}}
-    }
-  });
-}
-
-function renderForecastChart(forecastPoints){
-  const ctx = document.getElementById('resultChart').getContext('2d');
-  const hist = state.seriesRaw;
-  const labels = hist.map((_,i)=>i).concat(forecastPoints.map((_,i)=> hist.length+i));
-  const histData = hist.concat(new Array(forecastPoints.length).fill(null));
-  const fcData = new Array(hist.length-1).fill(null).concat([hist[hist.length-1]]).concat(forecastPoints);
-  if (state.resultChart) state.resultChart.destroy();
-  state.resultChart = new Chart(ctx, {
-    type:'line',
-    data:{labels, datasets:[
-      {label:'history', data:histData, borderColor:'#5B7C99', pointRadius:0, tension:0.15},
-      {label:'forecast', data:fcData, borderColor:'#C08552', borderDash:[5,4], pointRadius:0, tension:0.15}
-    ]},
-    options:{responsive:true, scales:{x:{ticks:{color:'#8B93A0',maxTicksLimit:10},grid:{color:'#2E333C'}}, y:{ticks:{color:'#8B93A0'},grid:{color:'#2E333C'}}}, plugins:{legend:{labels:{color:'#E8E6E1'}}}}
-  });
-}
-
-document.getElementById('forecast-steps-slider').addEventListener('input', e=>{
-  document.getElementById('forecast-steps-val').textContent = e.target.value;
-});
-document.getElementById('btn-run-forecast').addEventListener('click', ()=>{
-  const steps = parseInt(document.getElementById('forecast-steps-slider').value);
-  const {min,max} = state.targetEncoder;
-  let window = state.seriesNorm.slice(-state.lagCount);
-  const forecastNorm = [];
-  for(let s=0;s<steps;s++){
-    const inputT = tf.tensor2d([window]);
-    const predT = state.model.predict(inputT);
-    const val = predT.dataSync()[0];
-    forecastNorm.push(val);
-    window = window.slice(1).concat([val]);
-    inputT.dispose(); predT.dispose();
-  }
-  const forecastRaw = forecastNorm.map(v=> v*(max-min)+min);
-  state.lastForecast = forecastRaw;
-  renderForecastChart(forecastRaw);
-});
-
-/* ---- feature importance (first-layer weight magnitude proxy) ---- */
-
-function renderImportance(){
-  const layer0 = state.model.layers[0];
-  const weights = layer0.getWeights()[0]; // shape [nFeatures, units]
-  const data = weights.arraySync();
-  const importance = data.map(row => row.reduce((s,v)=>s+Math.abs(v),0));
-  const total = importance.reduce((a,b)=>a+b,0) || 1;
-  const normImportance = importance.map(v=> v/total);
-
-  const ctx = document.getElementById('importanceChart').getContext('2d');
-  if (state.importanceChart) state.importanceChart.destroy();
-  state.importanceChart = new Chart(ctx, {
-    type:'bar',
-    data:{labels: state.featureCols, datasets:[{data: normImportance, backgroundColor:'#C08552'}]},
-    options:{indexAxis:'y', responsive:true,
-      scales:{x:{ticks:{color:'#8B93A0'},grid:{color:'#2E333C'}}, y:{ticks:{color:'#8B93A0'},grid:{display:false}}},
-      plugins:{legend:{display:false}}
-    }
-  });
-}
-
-/* ---- live prediction ---- */
-
-function renderPredictForm(){
-  const wrap = document.getElementById('predict-grid');
-  const rows = state.cleanedRows;
-  wrap.innerHTML = state.featureCols.map(h=>{
-    const c = state.columns[h];
-    if (c.type === 'numeric'){
-      const vals = rows.map(r=>parseLooseNumber(r[h]));
-      const avg = mean(vals).toFixed(2);
-      return `<div><label class="field-label">${h}</label><input type="number" step="any" id="pred-${h}" value="${avg}"></div>`;
-    }
-    if (c.type === 'date'){
-      return `<div><label class="field-label">${h}</label><input type="text" id="pred-${h}" value="${rows[0][h]}"></div>`;
-    }
-    const cats = state.encoders[h].categories;
-    return `<div><label class="field-label">${h}</label><select id="pred-${h}">${cats.map(v=>`<option value="${v}">${v}</option>`).join('')}</select></div>`;
-  }).join('');
-}
-
-document.getElementById('btn-predict').addEventListener('click', ()=>{
-  const input = state.featureCols.map(h=>{
-    const el = document.getElementById('pred-'+h);
-    return state.encoders[h].encode(el.value);
-  });
-  const t = tf.tensor2d([input]);
-  const predT = state.model.predict(t);
-  const out = predT.dataSync();
-  let display;
-  if (state.taskType === 'classification'){
-    const cats = state.targetEncoder.categories;
-    const idx = out.indexOf(Math.max(...out));
-    display = `${cats[idx]}  <span style="font-size:14px;color:var(--text-dim);">(${(out[idx]*100).toFixed(1)}% confidence)</span>`;
-  } else {
-    const {min,max} = state.targetEncoder;
-    display = (out[0]*(max-min)+min).toFixed(3);
-  }
-  document.getElementById('readout').classList.remove('hidden');
-  document.getElementById('readout-val').innerHTML = display;
-  t.dispose(); predT.dispose();
-});
-
-/* ---- restart ---- */
-
-document.getElementById('btn-start-over').addEventListener('click', ()=>{
-  if (!confirm('Clear the current dataset and model, and start fresh?')) return;
-  location.reload();
-});
-
-/* init tracker position */
-goToStage('intake');
-</script>
-</body>
-</html>
+      state.his
