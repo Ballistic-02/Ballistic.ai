@@ -1012,4 +1012,454 @@ async function trainTabular(epochs, testFrac){
 
   await model.fit(xTrainT, yTrainT, {
     epochs, validationData:[xTestT,yTestT], shuffle:true, verbose:0,
-    callbacks:{ onEpochEnd: (epoch
+    callbacks:{ onEpochEnd: (epoch, logs)=>{
+      state.history.loss.push(logs.loss);
+      state.history.valLoss.push(logs.val_loss);
+      updateLossChart(epoch, epochs);
+    }}
+  });
+
+  state.model = model;
+  state.testSet = {X:xTest, testIdx, featureCols};
+
+  const predsT = model.predict(xTestT);
+  const preds = await predsT.array();
+
+  computeImpact(preds, testIdx, rows);
+
+  xTrainT.dispose(); yTrainT.dispose(); xTestT.dispose(); yTestT.dispose(); predsT.dispose();
+}
+
+async function trainTimeSeries(epochs, testFrac){
+  const rows = state.cleanedRows;
+  const series = rows.map(r=>parseLooseNumber(r[state.target]));
+  const lag = Math.min(5, Math.max(2, Math.floor(series.length/6)));
+  state.lagCount = lag;
+
+  const {min, max} = minMax(series);
+  const norm = series.map(v=> max>min ? (v-min)/(max-min) : 0);
+  state.targetEncoder = {type:'regression', min, max};
+
+  const X = [], y = [];
+  for(let i=lag;i<norm.length;i++){
+    X.push(norm.slice(i-lag,i));
+    y.push([norm[i]]);
+  }
+  const idx = shuffle(X.map((_,i)=>i));
+  const nTest = Math.max(1, Math.round(X.length*testFrac));
+  const testIdx = idx.slice(0,nTest);
+  const trainIdx = idx.slice(nTest);
+
+  const xTrain = trainIdx.map(i=>X[i]), yTrain = trainIdx.map(i=>y[i]);
+  const xTest = testIdx.map(i=>X[i]), yTest = testIdx.map(i=>y[i]);
+
+  const model = tf.sequential();
+  model.add(tf.layers.dense({units:16, activation:'relu', inputShape:[lag]}));
+  model.add(tf.layers.dense({units:8, activation:'relu'}));
+  model.add(tf.layers.dense({units:1, activation:'linear'}));
+  model.compile({optimizer: tf.train.adam(0.01), loss:'meanSquaredError'});
+
+  const xTrainT = tf.tensor2d(xTrain);
+  const yTrainT = tf.tensor2d(yTrain);
+  const xTestT = tf.tensor2d(xTest);
+  const yTestT = tf.tensor2d(yTest);
+
+  await model.fit(xTrainT, yTrainT, {
+    epochs, validationData:[xTestT,yTestT], shuffle:true, verbose:0,
+    callbacks:{ onEpochEnd:(epoch,logs)=>{
+      state.history.loss.push(logs.loss);
+      state.history.valLoss.push(logs.val_loss);
+      updateLossChart(epoch, epochs);
+    }}
+  });
+
+  state.model = model;
+  state.featureCols = Array.from({length:lag}, (_,i)=>`lag_${lag-i}`);
+  state.seriesNorm = norm;
+  state.seriesRaw = series;
+
+  const predsT = model.predict(xTestT);
+  const preds = await predsT.array();
+  const actualRaw = testIdx.map(i=> series[i+lag]);
+  const predRaw = preds.map(p=> p[0]*(max-min)+min);
+
+  const ssRes = actualRaw.reduce((s,a,i)=>s+(a-predRaw[i])*(a-predRaw[i]),0);
+  const meanA = mean(actualRaw);
+  const ssTot = actualRaw.reduce((s,a)=>s+(a-meanA)*(a-meanA),0);
+  const r2 = ssTot>0 ? 1 - ssRes/ssTot : 0;
+  const rmse = Math.sqrt(ssRes/actualRaw.length);
+
+  state.metrics = {type:'regression', r2, rmse};
+  state.testSet = {actualRaw, predRaw};
+
+  xTrainT.dispose(); yTrainT.dispose(); xTestT.dispose(); yTestT.dispose(); predsT.dispose();
+
+  renderImpactTimeSeries();
+}
+
+/* ---- loss chart ---- */
+
+function setupLossChart(){
+  const ctx = document.getElementById('lossChart').getContext('2d');
+  if (state.lossChart) state.lossChart.destroy();
+  state.lossChart = new Chart(ctx, {
+    type:'line',
+    data:{labels:[], datasets:[
+      {label:'train loss', data:[], borderColor:'#C08552', backgroundColor:'transparent', tension:0.25, pointRadius:0},
+      {label:'val loss', data:[], borderColor:'#5B7C99', backgroundColor:'transparent', tension:0.25, pointRadius:0}
+    ]},
+    options:{
+      responsive:true, animation:false,
+      scales:{
+        x:{ticks:{color:'#8B93A0',maxTicksLimit:8},grid:{color:'#2E333C'}},
+        y:{ticks:{color:'#8B93A0'},grid:{color:'#2E333C'}}
+      },
+      plugins:{legend:{labels:{color:'#E8E6E1'}}}
+    }
+  });
+}
+function updateLossChart(epoch, totalEpochs){
+  state.lossChart.data.labels.push(epoch+1);
+  state.lossChart.data.datasets[0].data.push(state.history.loss[state.history.loss.length-1]);
+  state.lossChart.data.datasets[1].data.push(state.history.valLoss[state.history.valLoss.length-1]);
+  state.lossChart.update('none');
+  document.getElementById('training-status').innerHTML =
+    `<span class="spinner" style="${epoch+1>=totalEpochs?'display:none;':''}"></span>epoch ${epoch+1} / ${totalEpochs}`;
+}
+
+document.getElementById('btn-to-impact').addEventListener('click', ()=>{
+  goToStage('impact');
+  if (state.taskType !== 'timeseries') renderImpactTabular();
+  renderImportance();
+  renderPredictForm();
+  generateExplanation();
+});
+
+/* ============================ STAGE 4: IMPACT ============================ */
+
+function computeImpact(preds, testIdx, rows){
+  if (state.taskType === 'classification'){
+    const cats = state.targetEncoder.categories;
+    const predLabels = preds.map(p=> cats[p.indexOf(Math.max(...p))]);
+    const actualLabels = testIdx.map(i=> String(rows[i][state.target]));
+    let correct=0;
+    const cm = {};
+    cats.forEach(a=>{cm[a]={}; cats.forEach(b=>cm[a][b]=0);});
+    predLabels.forEach((p,i)=>{
+      if (p===actualLabels[i]) correct++;
+      cm[actualLabels[i]][p]++;
+    });
+    state.metrics = {type:'classification', accuracy: correct/predLabels.length, cm, cats};
+    state.testSet.actualLabels = actualLabels;
+    state.testSet.predLabels = predLabels;
+  } else {
+    const {min,max} = state.targetEncoder;
+    const actualRaw = testIdx.map(i=> parseFloat(rows[i][state.target]));
+    const predRaw = preds.map(p=> p[0]*(max-min)+min);
+    const ssRes = actualRaw.reduce((s,a,i)=>s+(a-predRaw[i])*(a-predRaw[i]),0);
+    const meanA = mean(actualRaw);
+    const ssTot = actualRaw.reduce((s,a)=>s+(a-meanA)*(a-meanA),0);
+    const r2 = ssTot>0 ? 1 - ssRes/ssTot : 0;
+    const rmse = Math.sqrt(ssRes/actualRaw.length);
+    state.metrics = {type:'regression', r2, rmse};
+    state.testSet.actualRaw = actualRaw;
+    state.testSet.predRaw = predRaw;
+  }
+}
+
+function renderImpactTabular(){
+  document.getElementById('forecast-controls').classList.add('hidden');
+  document.getElementById('predict-section').classList.remove('hidden');
+  const cardsWrap = document.getElementById('metric-cards');
+  if (state.metrics.type === 'classification'){
+    cardsWrap.innerHTML = `
+      <div class="metric-card"><div class="val">${(state.metrics.accuracy*100).toFixed(1)}%</div><div class="lbl">Accuracy</div></div>
+      <div class="metric-card"><div class="val">${state.metrics.cats.length}</div><div class="lbl">Classes</div></div>
+      <div class="metric-card"><div class="val">${state.testSet.testIdx.length}</div><div class="lbl">Test rows</div></div>
+    `;
+    renderConfusionMatrix();
+    renderClassificationChart();
+  } else {
+    cardsWrap.innerHTML = `
+      <div class="metric-card"><div class="val">${state.metrics.r2.toFixed(3)}</div><div class="lbl">R²</div></div>
+      <div class="metric-card"><div class="val">${state.metrics.rmse.toFixed(2)}</div><div class="lbl">RMSE</div></div>
+      <div class="metric-card"><div class="val">${state.testSet.testIdx.length}</div><div class="lbl">Test rows</div></div>
+    `;
+    document.getElementById('confusion-wrap').classList.add('hidden');
+    renderRegressionChart();
+  }
+}
+
+function renderImpactTimeSeries(){
+  document.getElementById('forecast-controls').classList.remove('hidden');
+  document.getElementById('predict-section').classList.add('hidden');
+  document.getElementById('confusion-wrap').classList.add('hidden');
+  const cardsWrap = document.getElementById('metric-cards');
+  cardsWrap.innerHTML = `
+    <div class="metric-card"><div class="val">${state.metrics.r2.toFixed(3)}</div><div class="lbl">R²</div></div>
+    <div class="metric-card"><div class="val">${state.metrics.rmse.toFixed(2)}</div><div class="lbl">RMSE</div></div>
+    <div class="metric-card"><div class="val">${state.lagCount}</div><div class="lbl">Lag window</div></div>
+  `;
+  renderForecastChart([]);
+  renderImportance();
+  generateExplanation();
+}
+
+function renderConfusionMatrix(){
+  const wrap = document.getElementById('confusion-wrap');
+  wrap.classList.remove('hidden');
+  const {cm, cats} = state.metrics;
+  let html = '<thead><tr><th>actual \\ pred</th>' + cats.map(c=>`<th>${c}</th>`).join('') + '</tr></thead><tbody>';
+  cats.forEach(a=>{
+    html += `<tr><th>${a}</th>` + cats.map(b=>{
+      const v = cm[a][b];
+      return `<td class="${a===b?'diag':(v>0?'off':'')}">${v}</td>`;
+    }).join('') + '</tr>';
+  });
+  html += '</tbody>';
+  document.getElementById('cm-table').innerHTML = html;
+}
+
+function renderClassificationChart(){
+  const ctx = document.getElementById('resultChart').getContext('2d');
+  const cats = state.metrics.cats;
+  const counts = cats.map(c=> state.testSet.actualLabels.filter(a=>a===c).length);
+  const correctCounts = cats.map(c=> state.testSet.actualLabels.filter((a,i)=>a===c && state.testSet.predLabels[i]===c).length);
+  if (state.resultChart) state.resultChart.destroy();
+  state.resultChart = new Chart(ctx, {
+    type:'bar',
+    data:{labels:cats, datasets:[
+      {label:'test examples', data:counts, backgroundColor:'#2E333C'},
+      {label:'correctly predicted', data:correctCounts, backgroundColor:'#C08552'}
+    ]},
+    options:{responsive:true, scales:{x:{ticks:{color:'#8B93A0'},grid:{display:false}}, y:{ticks:{color:'#8B93A0'},grid:{color:'#2E333C'}}}, plugins:{legend:{labels:{color:'#E8E6E1'}}}}
+  });
+}
+
+function renderRegressionChart(){
+  const ctx = document.getElementById('resultChart').getContext('2d');
+  const {actualRaw, predRaw} = state.testSet;
+  const points = actualRaw.map((a,i)=>({x:a,y:predRaw[i]}));
+  const {min: lo, max: hi} = minMax(actualRaw.concat(predRaw));
+  if (state.resultChart) state.resultChart.destroy();
+  state.resultChart = new Chart(ctx, {
+    type:'scatter',
+    data:{datasets:[
+      {label:'actual vs predicted', data:points, backgroundColor:'#C08552'},
+      {label:'perfect prediction', data:[{x:lo,y:lo},{x:hi,y:hi}], type:'line', borderColor:'#5B7C99', borderDash:[4,4], pointRadius:0, borderWidth:1.5}
+    ]},
+    options:{responsive:true,
+      scales:{x:{title:{display:true,text:'actual',color:'#8B93A0'},ticks:{color:'#8B93A0'},grid:{color:'#2E333C'}},
+               y:{title:{display:true,text:'predicted',color:'#8B93A0'},ticks:{color:'#8B93A0'},grid:{color:'#2E333C'}}},
+      plugins:{legend:{labels:{color:'#E8E6E1'}}}
+    }
+  });
+}
+
+function renderForecastChart(forecastPoints){
+  const ctx = document.getElementById('resultChart').getContext('2d');
+  const hist = state.seriesRaw;
+  const labels = hist.map((_,i)=>i).concat(forecastPoints.map((_,i)=> hist.length+i));
+  const histData = hist.concat(new Array(forecastPoints.length).fill(null));
+  const fcData = new Array(hist.length-1).fill(null).concat([hist[hist.length-1]]).concat(forecastPoints);
+  if (state.resultChart) state.resultChart.destroy();
+  state.resultChart = new Chart(ctx, {
+    type:'line',
+    data:{labels, datasets:[
+      {label:'history', data:histData, borderColor:'#5B7C99', pointRadius:0, tension:0.15},
+      {label:'forecast', data:fcData, borderColor:'#C08552', borderDash:[5,4], pointRadius:0, tension:0.15}
+    ]},
+    options:{responsive:true, scales:{x:{ticks:{color:'#8B93A0',maxTicksLimit:10},grid:{color:'#2E333C'}}, y:{ticks:{color:'#8B93A0'},grid:{color:'#2E333C'}}}, plugins:{legend:{labels:{color:'#E8E6E1'}}}}
+  });
+}
+
+document.getElementById('forecast-steps-slider').addEventListener('input', e=>{
+  document.getElementById('forecast-steps-val').textContent = e.target.value;
+});
+document.getElementById('btn-run-forecast').addEventListener('click', ()=>{
+  const steps = parseInt(document.getElementById('forecast-steps-slider').value);
+  const {min,max} = state.targetEncoder;
+  let window = state.seriesNorm.slice(-state.lagCount);
+  const forecastNorm = [];
+  for(let s=0;s<steps;s++){
+    const inputT = tf.tensor2d([window]);
+    const predT = state.model.predict(inputT);
+    const val = predT.dataSync()[0];
+    forecastNorm.push(val);
+    window = window.slice(1).concat([val]);
+    inputT.dispose(); predT.dispose();
+  }
+  const forecastRaw = forecastNorm.map(v=> v*(max-min)+min);
+  state.lastForecast = forecastRaw;
+  renderForecastChart(forecastRaw);
+  generateExplanation();
+});
+
+/* ---- plain-language explainer ---- */
+
+function r2Descriptor(r2){
+  if (r2 >= 0.9) return {label:'excellent', text:'the model captures almost all of the pattern in your data'};
+  if (r2 >= 0.7) return {label:'strong', text:'the model has a solid handle on what drives changes in this number'};
+  if (r2 >= 0.5) return {label:'moderate', text:'the model has found a real pattern, but a fair amount of the variation is still unexplained'};
+  if (r2 >= 0.2) return {label:'weak', text:"the model's connection to the target is loose — treat its predictions as rough estimates, not firm numbers"};
+  return {label:'very weak', text:"the model isn't finding a meaningful pattern with the columns you gave it — more data, different features, or a different target might help"};
+}
+
+function confidenceDescriptor(frac){
+  if (frac >= 0.85) return 'high confidence';
+  if (frac >= 0.6) return 'moderate confidence';
+  return "low confidence — the model isn't very sure here, so treat it as a guess";
+}
+
+function findMostConfusedPair(cm, cats){
+  let best = null, bestCount = 0;
+  cats.forEach(a=> cats.forEach(b=>{
+    if (a===b) return;
+    if (cm[a][b] > bestCount){ bestCount = cm[a][b]; best = [a,b]; }
+  }));
+  return best ? {from:best[0], to:best[1], count:bestCount} : null;
+}
+
+function topFeatureSentence(){
+  if (!state.featureImportance || state.featureImportance.length === 0) return '';
+  const top = state.featureImportance.slice(0, Math.min(2, state.featureImportance.length));
+  const names = top.map(f=>`"${f.name}"`).join(' and ');
+  return ` To make its predictions, the model leaned most heavily on ${names}.`;
+}
+
+function generateExplanation(){
+  const el = document.getElementById('plain-explainer');
+  if (!el) return;
+  let html = '';
+
+  if (state.taskType === 'classification'){
+    const m = state.metrics;
+    const {topFrac} = getMajorityClass();
+    const baselinePct = (topFrac*100).toFixed(0);
+    const accPct = (m.accuracy*100).toFixed(0);
+    let compareLine;
+    if (m.accuracy > topFrac + 0.05){
+      compareLine = `That's meaningfully better than just always guessing the most common category (which would get it right about ${baselinePct}% of the time) — so it has genuinely learned something from the data.`;
+    } else if (m.accuracy > topFrac - 0.03){
+      compareLine = `That's about the same as always guessing the most common category (${baselinePct}%) — so treat this model with caution; it may not be picking up a real pattern yet.`;
+    } else {
+      compareLine = `That's actually worse than simply guessing the most common category every time (${baselinePct}%) — something is likely off with the features chosen or the amount of data available.`;
+    }
+    let confusionLine = '';
+    const pair = findMostConfusedPair(m.cm, m.cats);
+    if (pair){
+      confusionLine = ` Its most common mistake is predicting "${pair.to}" when the real answer was "${pair.from}" (${pair.count} time${pair.count===1?'':'s'} in the test data).`;
+    }
+    html = `<p>Out of every 100 predictions on data it hadn't seen before, this model gets about <b>${accPct} right</b>. ${compareLine}${confusionLine}${topFeatureSentence()}</p>`;
+
+  } else if (state.taskType === 'regression'){
+    const m = state.metrics;
+    const desc = r2Descriptor(m.r2);
+    const targetVals = state.testSet.actualRaw;
+    const avgTarget = mean(targetVals);
+    const pctOfAvg = avgTarget !== 0 ? Math.abs(m.rmse/avgTarget*100).toFixed(0) : null;
+    const rmseLine = pctOfAvg !== null
+      ? `On a typical unseen row, predictions for "${state.target}" are off by about <b>${m.rmse.toFixed(2)}</b> — roughly ${pctOfAvg}% of a typical value.`
+      : `On a typical unseen row, predictions for "${state.target}" are off by about <b>${m.rmse.toFixed(2)}</b>.`;
+    html = `<p>This model's fit is <b>${desc.label}</b> — ${desc.text}. ${rmseLine}${topFeatureSentence()}</p>`;
+
+  } else if (state.taskType === 'timeseries'){
+    const m = state.metrics;
+    const desc = r2Descriptor(m.r2);
+    let trendLine = '';
+    if (state.lastForecast && state.lastForecast.length > 1){
+      const f = state.lastForecast;
+      const delta = f[f.length-1] - f[0];
+      const pct = f[0] !== 0 ? (delta/Math.abs(f[0])*100) : 0;
+      if (Math.abs(pct) < 3) trendLine = ` Looking ahead, the forecast expects "${state.target}" to stay roughly flat.`;
+      else if (pct > 0) trendLine = ` Looking ahead, the forecast expects "${state.target}" to trend upward by roughly ${pct.toFixed(0)}% over the forecast window.`;
+      else trendLine = ` Looking ahead, the forecast expects "${state.target}" to trend downward by roughly ${Math.abs(pct).toFixed(0)}% over the forecast window.`;
+    }
+    html = `<p>This forecasting model's fit on past data is <b>${desc.label}</b> — ${desc.text}, based on the last ${state.lagCount} values each time. Typical predictions are off by about <b>${m.rmse.toFixed(2)}</b>.${trendLine}</p>`;
+  }
+
+  el.innerHTML = html;
+}
+
+/* ---- feature importance (first-layer weight magnitude proxy) ---- */
+
+function renderImportance(){
+  const layer0 = state.model.layers[0];
+  const weights = layer0.getWeights()[0]; // shape [nFeatures, units]
+  const data = weights.arraySync();
+  const importance = data.map(row => row.reduce((s,v)=>s+Math.abs(v),0));
+  const total = importance.reduce((a,b)=>a+b,0) || 1;
+  const normImportance = importance.map(v=> v/total);
+  state.featureImportance = state.featureCols.map((h,i)=>({name:h, value:normImportance[i]}))
+    .sort((a,b)=>b.value-a.value);
+
+  const ctx = document.getElementById('importanceChart').getContext('2d');
+  if (state.importanceChart) state.importanceChart.destroy();
+  state.importanceChart = new Chart(ctx, {
+    type:'bar',
+    data:{labels: state.featureCols, datasets:[{data: normImportance, backgroundColor:'#C08552'}]},
+    options:{indexAxis:'y', responsive:true,
+      scales:{x:{ticks:{color:'#8B93A0'},grid:{color:'#2E333C'}}, y:{ticks:{color:'#8B93A0'},grid:{display:false}}},
+      plugins:{legend:{display:false}}
+    }
+  });
+}
+
+/* ---- live prediction ---- */
+
+function renderPredictForm(){
+  const wrap = document.getElementById('predict-grid');
+  const rows = state.cleanedRows;
+  wrap.innerHTML = state.featureCols.map(h=>{
+    const c = state.columns[h];
+    if (c.type === 'numeric'){
+      const vals = rows.map(r=>parseLooseNumber(r[h]));
+      const avg = mean(vals).toFixed(2);
+      return `<div><label class="field-label">${h}</label><input type="number" step="any" id="pred-${h}" value="${avg}"></div>`;
+    }
+    if (c.type === 'date'){
+      return `<div><label class="field-label">${h}</label><input type="text" id="pred-${h}" value="${rows[0][h]}"></div>`;
+    }
+    const cats = state.encoders[h].categories;
+    return `<div><label class="field-label">${h}</label><select id="pred-${h}">${cats.map(v=>`<option value="${v}">${v}</option>`).join('')}</select></div>`;
+  }).join('');
+}
+
+document.getElementById('btn-predict').addEventListener('click', ()=>{
+  const input = state.featureCols.map(h=>{
+    const el = document.getElementById('pred-'+h);
+    return state.encoders[h].encode(el.value);
+  });
+  const t = tf.tensor2d([input]);
+  const predT = state.model.predict(t);
+  const out = predT.dataSync();
+  let display, note;
+  if (state.taskType === 'classification'){
+    const cats = state.targetEncoder.categories;
+    const idx = out.indexOf(Math.max(...out));
+    display = `${cats[idx]}  <span style="font-size:14px;color:var(--text-dim);">(${(out[idx]*100).toFixed(1)}% confidence)</span>`;
+    note = `That's ${confidenceDescriptor(out[idx])} — this model is right about ${(state.metrics.accuracy*100).toFixed(0)}% of the time overall, so weigh this prediction against that baseline.`;
+  } else {
+    const {min,max} = state.targetEncoder;
+    display = (out[0]*(max-min)+min).toFixed(3);
+    const desc = r2Descriptor(state.metrics.r2);
+    note = `Typical predictions from this model are off by about ${state.metrics.rmse.toFixed(2)} (fit quality: ${desc.label}) — treat this as an estimate, not an exact figure.`;
+  }
+  document.getElementById('readout').classList.remove('hidden');
+  document.getElementById('readout-val').innerHTML = display;
+  document.getElementById('readout-note').textContent = note;
+  t.dispose(); predT.dispose();
+});
+
+/* ---- restart ---- */
+
+document.getElementById('btn-start-over').addEventListener('click', ()=>{
+  if (!confirm('Clear the current dataset and model, and start fresh?')) return;
+  location.reload();
+});
+
+/* init tracker position */
+goToStage('intake');
+</script>
+</body>
+</html>
