@@ -77,7 +77,6 @@
   .panel .sub{color:var(--text-dim);font-size:13px;margin-bottom:20px;}
 
   .dropzone{
-    display:block;
     border:1px dashed var(--border);
     border-radius:6px;
     padding:40px 20px;
@@ -230,11 +229,11 @@
   <section class="panel active" id="panel-intake">
     <h2>01 — Intake</h2>
     <div class="sub">Load a dataset. Ballistic AI reads every column and works out what it's looking at.</div>
-    <label class="dropzone" id="dropzone" for="fileInput">
+    <div class="dropzone" id="dropzone">
       <strong>Drop a CSV here</strong> or click to browse<br>
       <span style="font-size:12px;">any table — sales, sports stats, survey data, sensor logs...</span>
-    </label>
-    <input type="file" id="fileInput" accept=".csv" style="display:none;" />
+      <input type="file" id="fileInput" accept=".csv" />
+    </div>
     <div id="intake-summary" class="hidden">
       <div class="divider"></div>
       <div class="flex-between">
@@ -320,11 +319,6 @@
 
     <div class="metric-cards" id="metric-cards"></div>
 
-    <div class="chart-box" id="explainer-box" style="border-color:var(--brass-dim);">
-      <div style="font-size:11px;letter-spacing:0.06em;color:var(--brass);text-transform:uppercase;margin-bottom:10px;">In plain terms</div>
-      <div id="plain-explainer" style="font-size:14px;line-height:1.65;color:var(--text);"></div>
-    </div>
-
     <div class="chart-box"><canvas id="resultChart" height="120"></canvas></div>
 
     <div id="confusion-wrap" class="hidden">
@@ -351,7 +345,6 @@
         <svg class="crosshair" width="34" height="34" viewBox="0 0 34 34"><circle cx="17" cy="17" r="12" fill="none" stroke="#C08552" stroke-width="1.3"/><circle cx="17" cy="17" r="4" fill="none" stroke="#C08552" stroke-width="1.3"/><line x1="17" y1="0" x2="17" y2="8" stroke="#C08552" stroke-width="1.3"/><line x1="17" y1="26" x2="17" y2="34" stroke="#C08552" stroke-width="1.3"/><line x1="0" y1="17" x2="8" y2="17" stroke="#C08552" stroke-width="1.3"/><line x1="26" y1="17" x2="34" y2="17" stroke="#C08552" stroke-width="1.3"/></svg>
         <div class="rlabel">Predicted output</div>
         <div class="rval" id="readout-val">—</div>
-        <div class="small-note" id="readout-note" style="margin-top:8px;"></div>
       </div>
     </div>
 
@@ -525,20 +518,6 @@ function normalizeCell(v){
   return typeof v === 'string' ? v.trim().replace(/\s+/g,' ') : v;
 }
 
-// Math.min(...largeArray) / Math.max(...largeArray) throws a silent stack
-// overflow once an array gets into the tens of thousands of elements — a
-// real risk with retail/transaction-scale CSVs. This loop-based version has
-// no such limit.
-function minMax(arr){
-  let min = Infinity, max = -Infinity;
-  for (let i=0;i<arr.length;i++){
-    const v = arr[i];
-    if (v < min) min = v;
-    if (v > max) max = v;
-  }
-  return {min, max};
-}
-
 function shuffle(arr){
   const a = arr.slice();
   for(let i=a.length-1;i>0;i--){
@@ -589,11 +568,7 @@ document.querySelectorAll('.stage-label').forEach(el=>{
 const dropzone = document.getElementById('dropzone');
 const fileInput = document.getElementById('fileInput');
 
-// Note: no JS-triggered click() here — the <label for="fileInput"> in the
-// HTML handles "click to browse" natively. Some browser extensions (ad
-// blockers, privacy tools) silently block the common "hidden input +
-// programmatic .click()" pattern; a native label association can't be
-// blocked that way since it's standard form behavior.
+dropzone.addEventListener('click', ()=>fileInput.click());
 dropzone.addEventListener('dragover', e=>{e.preventDefault();dropzone.classList.add('drag');});
 dropzone.addEventListener('dragleave', ()=>dropzone.classList.remove('drag'));
 dropzone.addEventListener('drop', e=>{
@@ -641,7 +616,7 @@ function profileColumns(){
       unique: uniq,
       isIdLike: uniq === values.length && values.length > 5,
       isConstant: uniq <= 1,
-      highCardinality: det.type === 'categorical' && (uniq > 30 || uniq > values.length*0.3)
+      highCardinality: det.type === 'categorical' && uniq > 20 && uniq > values.length*0.3
     };
     if (det.type === 'numeric'){
       const nums = values.filter(v=>!isMissing(v)).map(parseLooseNumber).filter(n=>!Number.isNaN(n));
@@ -862,20 +837,16 @@ function updateTaskNote(auto){
 
 // Warns when one class dominates the target column — a model can look
 // "accurate" while just always predicting the majority class.
-function getMajorityClass(){
+function checkClassImbalance(){
   const vals = state.cleanedRows.map(r=>String(r[state.target]));
   const counts = {};
   vals.forEach(v=>counts[v]=(counts[v]||0)+1);
   const total = vals.length;
   const entries = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
   const [topLabel, topCount] = entries[0];
-  return {topLabel, topFrac: topCount/total, numClasses: entries.length};
-}
-
-function checkClassImbalance(){
-  const {topLabel, topFrac, numClasses} = getMajorityClass();
+  const topFrac = topCount/total;
   const note = document.getElementById('imbalance-note');
-  if (topFrac > 0.8 && numClasses > 1){
+  if (topFrac > 0.8 && entries.length > 1){
     note.textContent = `⚠ Class imbalance: "${topLabel}" makes up ${(topFrac*100).toFixed(0)}% of rows. A model that always guesses "${topLabel}" would already score ${(topFrac*100).toFixed(0)}% accuracy without learning anything — treat the accuracy metric on the Impact page with that in mind.`;
   } else {
     note.textContent = '';
@@ -915,7 +886,7 @@ function buildEncoder(colName, rows){
   const raw = rows.map(r=>r[colName]);
   if (type === 'numeric' || type === 'date'){
     const nums = type === 'date' ? raw.map(v=>new Date(v).getTime()) : raw.map(v=>parseLooseNumber(v));
-    const {min, max} = minMax(nums);
+    const min = Math.min(...nums), max = Math.max(...nums);
     return {type:'numeric', min, max, encode:(v)=>{
       const n = type==='date' ? new Date(v).getTime() : parseLooseNumber(v);
       return max>min ? (n-min)/(max-min) : 0;
@@ -986,7 +957,7 @@ async function trainTabular(epochs, testFrac){
     yTest = testIdx.map(i=>oneHot[i]);
   } else {
     const vals = rows.map(r=>parseLooseNumber(r[state.target]));
-    const {min, max} = minMax(vals);
+    const min = Math.min(...vals), max = Math.max(...vals);
     targetEncoder = {type:'regression', min, max};
     outputUnits = 1;
     lossFn = 'meanSquaredError';
@@ -1036,7 +1007,7 @@ async function trainTimeSeries(epochs, testFrac){
   const lag = Math.min(5, Math.max(2, Math.floor(series.length/6)));
   state.lagCount = lag;
 
-  const {min, max} = minMax(series);
+  const min = Math.min(...series), max = Math.max(...series);
   const norm = series.map(v=> max>min ? (v-min)/(max-min) : 0);
   state.targetEncoder = {type:'regression', min, max};
 
@@ -1132,7 +1103,6 @@ document.getElementById('btn-to-impact').addEventListener('click', ()=>{
   if (state.taskType !== 'timeseries') renderImpactTabular();
   renderImportance();
   renderPredictForm();
-  generateExplanation();
 });
 
 /* ============================ STAGE 4: IMPACT ============================ */
@@ -1202,7 +1172,6 @@ function renderImpactTimeSeries(){
   `;
   renderForecastChart([]);
   renderImportance();
-  generateExplanation();
 }
 
 function renderConfusionMatrix(){
@@ -1240,7 +1209,7 @@ function renderRegressionChart(){
   const ctx = document.getElementById('resultChart').getContext('2d');
   const {actualRaw, predRaw} = state.testSet;
   const points = actualRaw.map((a,i)=>({x:a,y:predRaw[i]}));
-  const {min: lo, max: hi} = minMax(actualRaw.concat(predRaw));
+  const lo = Math.min(...actualRaw, ...predRaw), hi = Math.max(...actualRaw, ...predRaw);
   if (state.resultChart) state.resultChart.destroy();
   state.resultChart = new Chart(ctx, {
     type:'scatter',
@@ -1292,94 +1261,7 @@ document.getElementById('btn-run-forecast').addEventListener('click', ()=>{
   const forecastRaw = forecastNorm.map(v=> v*(max-min)+min);
   state.lastForecast = forecastRaw;
   renderForecastChart(forecastRaw);
-  generateExplanation();
 });
-
-/* ---- plain-language explainer ---- */
-
-function r2Descriptor(r2){
-  if (r2 >= 0.9) return {label:'excellent', text:'the model captures almost all of the pattern in your data'};
-  if (r2 >= 0.7) return {label:'strong', text:'the model has a solid handle on what drives changes in this number'};
-  if (r2 >= 0.5) return {label:'moderate', text:'the model has found a real pattern, but a fair amount of the variation is still unexplained'};
-  if (r2 >= 0.2) return {label:'weak', text:"the model's connection to the target is loose — treat its predictions as rough estimates, not firm numbers"};
-  return {label:'very weak', text:"the model isn't finding a meaningful pattern with the columns you gave it — more data, different features, or a different target might help"};
-}
-
-function confidenceDescriptor(frac){
-  if (frac >= 0.85) return 'high confidence';
-  if (frac >= 0.6) return 'moderate confidence';
-  return "low confidence — the model isn't very sure here, so treat it as a guess";
-}
-
-function findMostConfusedPair(cm, cats){
-  let best = null, bestCount = 0;
-  cats.forEach(a=> cats.forEach(b=>{
-    if (a===b) return;
-    if (cm[a][b] > bestCount){ bestCount = cm[a][b]; best = [a,b]; }
-  }));
-  return best ? {from:best[0], to:best[1], count:bestCount} : null;
-}
-
-function topFeatureSentence(){
-  if (!state.featureImportance || state.featureImportance.length === 0) return '';
-  const top = state.featureImportance.slice(0, Math.min(2, state.featureImportance.length));
-  const names = top.map(f=>`"${f.name}"`).join(' and ');
-  return ` To make its predictions, the model leaned most heavily on ${names}.`;
-}
-
-function generateExplanation(){
-  const el = document.getElementById('plain-explainer');
-  if (!el) return;
-  let html = '';
-
-  if (state.taskType === 'classification'){
-    const m = state.metrics;
-    const {topFrac} = getMajorityClass();
-    const baselinePct = (topFrac*100).toFixed(0);
-    const accPct = (m.accuracy*100).toFixed(0);
-    let compareLine;
-    if (m.accuracy > topFrac + 0.05){
-      compareLine = `That's meaningfully better than just always guessing the most common category (which would get it right about ${baselinePct}% of the time) — so it has genuinely learned something from the data.`;
-    } else if (m.accuracy > topFrac - 0.03){
-      compareLine = `That's about the same as always guessing the most common category (${baselinePct}%) — so treat this model with caution; it may not be picking up a real pattern yet.`;
-    } else {
-      compareLine = `That's actually worse than simply guessing the most common category every time (${baselinePct}%) — something is likely off with the features chosen or the amount of data available.`;
-    }
-    let confusionLine = '';
-    const pair = findMostConfusedPair(m.cm, m.cats);
-    if (pair){
-      confusionLine = ` Its most common mistake is predicting "${pair.to}" when the real answer was "${pair.from}" (${pair.count} time${pair.count===1?'':'s'} in the test data).`;
-    }
-    html = `<p>Out of every 100 predictions on data it hadn't seen before, this model gets about <b>${accPct} right</b>. ${compareLine}${confusionLine}${topFeatureSentence()}</p>`;
-
-  } else if (state.taskType === 'regression'){
-    const m = state.metrics;
-    const desc = r2Descriptor(m.r2);
-    const targetVals = state.testSet.actualRaw;
-    const avgTarget = mean(targetVals);
-    const pctOfAvg = avgTarget !== 0 ? Math.abs(m.rmse/avgTarget*100).toFixed(0) : null;
-    const rmseLine = pctOfAvg !== null
-      ? `On a typical unseen row, predictions for "${state.target}" are off by about <b>${m.rmse.toFixed(2)}</b> — roughly ${pctOfAvg}% of a typical value.`
-      : `On a typical unseen row, predictions for "${state.target}" are off by about <b>${m.rmse.toFixed(2)}</b>.`;
-    html = `<p>This model's fit is <b>${desc.label}</b> — ${desc.text}. ${rmseLine}${topFeatureSentence()}</p>`;
-
-  } else if (state.taskType === 'timeseries'){
-    const m = state.metrics;
-    const desc = r2Descriptor(m.r2);
-    let trendLine = '';
-    if (state.lastForecast && state.lastForecast.length > 1){
-      const f = state.lastForecast;
-      const delta = f[f.length-1] - f[0];
-      const pct = f[0] !== 0 ? (delta/Math.abs(f[0])*100) : 0;
-      if (Math.abs(pct) < 3) trendLine = ` Looking ahead, the forecast expects "${state.target}" to stay roughly flat.`;
-      else if (pct > 0) trendLine = ` Looking ahead, the forecast expects "${state.target}" to trend upward by roughly ${pct.toFixed(0)}% over the forecast window.`;
-      else trendLine = ` Looking ahead, the forecast expects "${state.target}" to trend downward by roughly ${Math.abs(pct).toFixed(0)}% over the forecast window.`;
-    }
-    html = `<p>This forecasting model's fit on past data is <b>${desc.label}</b> — ${desc.text}, based on the last ${state.lagCount} values each time. Typical predictions are off by about <b>${m.rmse.toFixed(2)}</b>.${trendLine}</p>`;
-  }
-
-  el.innerHTML = html;
-}
 
 /* ---- feature importance (first-layer weight magnitude proxy) ---- */
 
@@ -1390,8 +1272,6 @@ function renderImportance(){
   const importance = data.map(row => row.reduce((s,v)=>s+Math.abs(v),0));
   const total = importance.reduce((a,b)=>a+b,0) || 1;
   const normImportance = importance.map(v=> v/total);
-  state.featureImportance = state.featureCols.map((h,i)=>({name:h, value:normImportance[i]}))
-    .sort((a,b)=>b.value-a.value);
 
   const ctx = document.getElementById('importanceChart').getContext('2d');
   if (state.importanceChart) state.importanceChart.destroy();
@@ -1433,21 +1313,17 @@ document.getElementById('btn-predict').addEventListener('click', ()=>{
   const t = tf.tensor2d([input]);
   const predT = state.model.predict(t);
   const out = predT.dataSync();
-  let display, note;
+  let display;
   if (state.taskType === 'classification'){
     const cats = state.targetEncoder.categories;
     const idx = out.indexOf(Math.max(...out));
     display = `${cats[idx]}  <span style="font-size:14px;color:var(--text-dim);">(${(out[idx]*100).toFixed(1)}% confidence)</span>`;
-    note = `That's ${confidenceDescriptor(out[idx])} — this model is right about ${(state.metrics.accuracy*100).toFixed(0)}% of the time overall, so weigh this prediction against that baseline.`;
   } else {
     const {min,max} = state.targetEncoder;
     display = (out[0]*(max-min)+min).toFixed(3);
-    const desc = r2Descriptor(state.metrics.r2);
-    note = `Typical predictions from this model are off by about ${state.metrics.rmse.toFixed(2)} (fit quality: ${desc.label}) — treat this as an estimate, not an exact figure.`;
   }
   document.getElementById('readout').classList.remove('hidden');
   document.getElementById('readout-val').innerHTML = display;
-  document.getElementById('readout-note').textContent = note;
   t.dispose(); predT.dispose();
 });
 
