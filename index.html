@@ -9,6 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tensorflow/4.22.0/tf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/3.0.1/jspdf.umd.min.js"></script>
 <style>
   :root{
     --bg:#14171C;
@@ -77,6 +78,7 @@
   .panel .sub{color:var(--text-dim);font-size:13px;margin-bottom:20px;}
 
   .dropzone{
+    display:block;
     border:1px dashed var(--border);
     border-radius:6px;
     padding:40px 20px;
@@ -227,13 +229,13 @@
 
   <!-- STAGE 1: INTAKE -->
   <section class="panel active" id="panel-intake">
-    <h2>Step 01 → Intake</h2>
+    <h2>Intake</h2>
     <div class="sub">Load a dataset. Ballistic AI reads every column and works out what it's looking at.</div>
-    <div class="dropzone" id="dropzone">
+    <label class="dropzone" id="dropzone" for="fileInput">
       <strong>Drop a CSV here</strong> or click to browse<br>
-      <span style="font-size:12px;">any table → sales, sports stats, survey data, sensor logs...</span>
-      <input type="file" id="fileInput" accept=".csv" />
-    </div>
+      <span style="font-size:12px;">any table, sales, sports stats, survey data, sensor logs...</span>
+    </label>
+    <input type="file" id="fileInput" accept=".csv" style="display:none;" />
     <div id="intake-summary" class="hidden">
       <div class="divider"></div>
       <div class="flex-between">
@@ -253,8 +255,8 @@
 
   <!-- STAGE 2: CALIBRATE -->
   <section class="panel" id="panel-calibrate">
-    <h2>Step 02 → Calibrate</h2>
-    <div class="sub">Cleaning pass: duplicates, missing values, dead columns, inconsistent category spellings, and outliers all get handled here, before any model sees the data.</div>
+    <h2>Calibrate</h2>
+    <div class="sub">Cleaning pass: duplicates, missing values, dead columns, inconsistent category spellings, and outliers all get handled here before any model sees the data.</div>
     <div class="checkrow" style="margin-bottom:14px;">
       <input type="checkbox" id="chk-cap-outliers">
       <label for="chk-cap-outliers">Cap extreme outliers to the IQR bound (winsorize) instead of leaving them as-is</label>
@@ -268,7 +270,7 @@
 
   <!-- STAGE 3: TRAIN -->
   <section class="panel" id="panel-train">
-    <h2>Step 03 → Train</h2>
+    <h2>Train</h2>
     <div class="sub">Pick a target. Ballistic AI infers the task, builds a network, and fires the training run.</div>
 
     <label class="field-label">Target column (what to predict)</label>
@@ -314,7 +316,7 @@
 
   <!-- STAGE 4: IMPACT -->
   <section class="panel" id="panel-impact">
-    <h2>Step 04 → Impact</h2>
+    <h2>Impact</h2>
     <div class="sub">Results, live prediction, and what the model actually leaned on.</div>
 
     <div class="metric-cards" id="metric-cards"></div>
@@ -346,6 +348,12 @@
         <div class="rlabel">Predicted output</div>
         <div class="rval" id="readout-val">—</div>
       </div>
+    </div>
+
+    <div class="divider"></div>
+    <div class="flex-between">
+      <button class="btn secondary" id="btn-download-report">Download report (PDF)</button>
+      <button class="btn secondary" id="btn-download-charts">Download charts (PNG)</button>
     </div>
 
     <div style="margin-top:26px;text-align:right;">
@@ -518,6 +526,20 @@ function normalizeCell(v){
   return typeof v === 'string' ? v.trim().replace(/\s+/g,' ') : v;
 }
 
+// Math.min(...largeArray) / Math.max(...largeArray) throws a silent stack
+// overflow once an array gets into the tens of thousands of elements — a
+// real risk with retail/transaction-scale CSVs. This loop-based version has
+// no such limit.
+function minMax(arr){
+  let min = Infinity, max = -Infinity;
+  for (let i=0;i<arr.length;i++){
+    const v = arr[i];
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  return {min, max};
+}
+
 function shuffle(arr){
   const a = arr.slice();
   for(let i=a.length-1;i>0;i--){
@@ -568,7 +590,11 @@ document.querySelectorAll('.stage-label').forEach(el=>{
 const dropzone = document.getElementById('dropzone');
 const fileInput = document.getElementById('fileInput');
 
-dropzone.addEventListener('click', ()=>fileInput.click());
+// Note: no JS-triggered click() here — the <label for="fileInput"> in the
+// HTML handles "click to browse" natively. Some browser extensions (ad
+// blockers, privacy tools) silently block the common "hidden input +
+// programmatic .click()" pattern; a native label association can't be
+// blocked that way since it's standard form behavior.
 dropzone.addEventListener('dragover', e=>{e.preventDefault();dropzone.classList.add('drag');});
 dropzone.addEventListener('dragleave', ()=>dropzone.classList.remove('drag'));
 dropzone.addEventListener('drop', e=>{
@@ -616,7 +642,7 @@ function profileColumns(){
       unique: uniq,
       isIdLike: uniq === values.length && values.length > 5,
       isConstant: uniq <= 1,
-      highCardinality: det.type === 'categorical' && uniq > 20 && uniq > values.length*0.3
+      highCardinality: det.type === 'categorical' && (uniq > 30 || uniq > values.length*0.3)
     };
     if (det.type === 'numeric'){
       const nums = values.filter(v=>!isMissing(v)).map(parseLooseNumber).filter(n=>!Number.isNaN(n));
@@ -837,16 +863,20 @@ function updateTaskNote(auto){
 
 // Warns when one class dominates the target column — a model can look
 // "accurate" while just always predicting the majority class.
-function checkClassImbalance(){
+function getMajorityClass(){
   const vals = state.cleanedRows.map(r=>String(r[state.target]));
   const counts = {};
   vals.forEach(v=>counts[v]=(counts[v]||0)+1);
   const total = vals.length;
   const entries = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
   const [topLabel, topCount] = entries[0];
-  const topFrac = topCount/total;
+  return {topLabel, topFrac: topCount/total, numClasses: entries.length};
+}
+
+function checkClassImbalance(){
+  const {topLabel, topFrac, numClasses} = getMajorityClass();
   const note = document.getElementById('imbalance-note');
-  if (topFrac > 0.8 && entries.length > 1){
+  if (topFrac > 0.8 && numClasses > 1){
     note.textContent = `⚠ Class imbalance: "${topLabel}" makes up ${(topFrac*100).toFixed(0)}% of rows. A model that always guesses "${topLabel}" would already score ${(topFrac*100).toFixed(0)}% accuracy without learning anything — treat the accuracy metric on the Impact page with that in mind.`;
   } else {
     note.textContent = '';
@@ -886,7 +916,7 @@ function buildEncoder(colName, rows){
   const raw = rows.map(r=>r[colName]);
   if (type === 'numeric' || type === 'date'){
     const nums = type === 'date' ? raw.map(v=>new Date(v).getTime()) : raw.map(v=>parseLooseNumber(v));
-    const min = Math.min(...nums), max = Math.max(...nums);
+    const {min, max} = minMax(nums);
     return {type:'numeric', min, max, encode:(v)=>{
       const n = type==='date' ? new Date(v).getTime() : parseLooseNumber(v);
       return max>min ? (n-min)/(max-min) : 0;
@@ -957,7 +987,7 @@ async function trainTabular(epochs, testFrac){
     yTest = testIdx.map(i=>oneHot[i]);
   } else {
     const vals = rows.map(r=>parseLooseNumber(r[state.target]));
-    const min = Math.min(...vals), max = Math.max(...vals);
+    const {min, max} = minMax(vals);
     targetEncoder = {type:'regression', min, max};
     outputUnits = 1;
     lossFn = 'meanSquaredError';
@@ -1007,7 +1037,7 @@ async function trainTimeSeries(epochs, testFrac){
   const lag = Math.min(5, Math.max(2, Math.floor(series.length/6)));
   state.lagCount = lag;
 
-  const min = Math.min(...series), max = Math.max(...series);
+  const {min, max} = minMax(series);
   const norm = series.map(v=> max>min ? (v-min)/(max-min) : 0);
   state.targetEncoder = {type:'regression', min, max};
 
@@ -1209,7 +1239,7 @@ function renderRegressionChart(){
   const ctx = document.getElementById('resultChart').getContext('2d');
   const {actualRaw, predRaw} = state.testSet;
   const points = actualRaw.map((a,i)=>({x:a,y:predRaw[i]}));
-  const lo = Math.min(...actualRaw, ...predRaw), hi = Math.max(...actualRaw, ...predRaw);
+  const {min: lo, max: hi} = minMax(actualRaw.concat(predRaw));
   if (state.resultChart) state.resultChart.destroy();
   state.resultChart = new Chart(ctx, {
     type:'scatter',
@@ -1272,6 +1302,8 @@ function renderImportance(){
   const importance = data.map(row => row.reduce((s,v)=>s+Math.abs(v),0));
   const total = importance.reduce((a,b)=>a+b,0) || 1;
   const normImportance = importance.map(v=> v/total);
+  state.featureImportance = state.featureCols.map((h,i)=>({name:h, value:normImportance[i]}))
+    .sort((a,b)=>b.value-a.value);
 
   const ctx = document.getElementById('importanceChart').getContext('2d');
   if (state.importanceChart) state.importanceChart.destroy();
@@ -1324,7 +1356,154 @@ document.getElementById('btn-predict').addEventListener('click', ()=>{
   }
   document.getElementById('readout').classList.remove('hidden');
   document.getElementById('readout-val').innerHTML = display;
+  state.lastPrediction = {display: display.replace(/<[^>]+>/g,'').trim(), inputs: state.featureCols.map((h,i)=>({name:h, value: document.getElementById('pred-'+h).value}))};
   t.dispose(); predT.dispose();
+});
+
+/* ---- downloads: PDF report & chart images ---- */
+
+function triggerDownload(dataUrl, filename){
+  const a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+document.getElementById('btn-download-charts').addEventListener('click', ()=>{
+  const stamp = new Date().toISOString().slice(0,10);
+  if (state.resultChart){
+    triggerDownload(state.resultChart.toBase64Image(), `ballistic-ai-${state.target}-chart-${stamp}.png`);
+  }
+  if (state.importanceChart){
+    // Slight delay so browsers don't drop the second simultaneous download.
+    setTimeout(()=>{
+      triggerDownload(state.importanceChart.toBase64Image(), `ballistic-ai-${state.target}-importance-${stamp}.png`);
+    }, 300);
+  }
+});
+
+document.getElementById('btn-download-report').addEventListener('click', ()=>{
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({unit:'mm', format:'a4'});
+  const marginX = 16;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const maxWidth = pageWidth - marginX*2;
+  let y = 20;
+
+  function ensureSpace(needed){
+    if (y + needed > pageHeight - 16){ doc.addPage(); y = 20; }
+  }
+  function heading(text){
+    ensureSpace(12);
+    doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(30,30,30);
+    doc.text(text, marginX, y);
+    y += 7;
+    doc.setDrawColor(200,140,90); doc.setLineWidth(0.3);
+    doc.line(marginX, y-4.5, marginX+maxWidth, y-4.5);
+  }
+  function body(text){
+    doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(60,60,60);
+    const lines = doc.splitTextToSize(text, maxWidth);
+    lines.forEach(line=>{ ensureSpace(6); doc.text(line, marginX, y); y += 5.5; });
+  }
+  function labelValue(label, value){
+    ensureSpace(6);
+    doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.setTextColor(30,30,30);
+    doc.text(label+':', marginX, y);
+    doc.setFont('helvetica','normal'); doc.setTextColor(60,60,60);
+    doc.text(String(value), marginX+42, y);
+    y += 6;
+  }
+
+  // Title
+  doc.setFont('helvetica','bold'); doc.setFontSize(19); doc.setTextColor(20,20,20);
+  doc.text('BALLISTIC AI — Model Report', marginX, y);
+  y += 6;
+  doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(130,130,130);
+  doc.text(`Generated ${new Date().toLocaleString()}`, marginX, y);
+  y += 10;
+
+  // Dataset & task
+  heading('Dataset & Task');
+  labelValue('Target column', state.target);
+  labelValue('Task type', state.taskType);
+  labelValue('Rows used', state.cleanedRows.length);
+  labelValue('Features used', state.featureCols.length);
+  y += 1;
+  body(`Feature columns: ${state.featureCols.join(', ')}`);
+  y += 4;
+
+  // Performance
+  heading('Performance');
+  if (state.metrics.type === 'classification'){
+    labelValue('Accuracy', (state.metrics.accuracy*100).toFixed(1)+'%');
+    labelValue('Classes', state.metrics.cats.length);
+    y += 2;
+    body('Confusion matrix (rows = actual, columns = predicted):');
+    const cats = state.metrics.cats, cm = state.metrics.cm;
+    const header = ['actual\\pred', ...cats].join('   ');
+    body(header);
+    cats.forEach(a=>{
+      const row = [a, ...cats.map(b=>String(cm[a][b]))].join('   ');
+      body(row);
+    });
+  } else {
+    labelValue('R²', state.metrics.r2.toFixed(3));
+    labelValue('RMSE', state.metrics.rmse.toFixed(2));
+    if (state.taskType === 'timeseries') labelValue('Lag window', state.lagCount);
+  }
+  y += 4;
+
+  // Feature importance
+  if (state.featureCols && state.featureCols.length){
+    heading('Feature Importance (relative weight)');
+    const layer0 = state.model.layers[0];
+    const weights = layer0.getWeights()[0].arraySync();
+    const importance = weights.map(row => row.reduce((s,v)=>s+Math.abs(v),0));
+    const total = importance.reduce((a,b)=>a+b,0) || 1;
+    const ranked = state.featureCols.map((h,i)=>({name:h, pct: importance[i]/total*100}))
+      .sort((a,b)=>b.pct-a.pct);
+    ranked.forEach(f=> body(`${f.name}: ${f.pct.toFixed(1)}%`));
+    y += 4;
+  }
+
+  // Live prediction (if one was made)
+  if (state.lastPrediction){
+    heading('Last Live Prediction');
+    body(`Inputs — ${state.lastPrediction.inputs.map(i=>`${i.name}=${i.value}`).join(', ')}`);
+    labelValue('Predicted output', state.lastPrediction.display);
+    y += 4;
+  }
+
+  // Charts as images
+  if (state.resultChart){
+    ensureSpace(90);
+    heading('Result Chart');
+    const img = state.resultChart.toBase64Image();
+    const w = maxWidth, h = w*0.55;
+    ensureSpace(h+4);
+    doc.addImage(img, 'PNG', marginX, y, w, h);
+    y += h + 8;
+  }
+  if (state.importanceChart){
+    ensureSpace(80);
+    heading('Feature Importance Chart');
+    const img = state.importanceChart.toBase64Image();
+    const w = maxWidth, h = w*0.5;
+    ensureSpace(h+4);
+    doc.addImage(img, 'PNG', marginX, y, w, h);
+    y += h + 8;
+  }
+
+  ensureSpace(14);
+  doc.setFont('helvetica','italic'); doc.setFontSize(8.5); doc.setTextColor(140,140,140);
+  doc.text('Built with Ballistic AI — a no-code prototyping tool. Validate anything high-stakes with a proper statistical review.', marginX, pageHeight-12);
+
+  const stamp = new Date().toISOString().slice(0,10);
+  doc.save(`ballistic-ai-report-${state.target}-${stamp}.pdf`);
 });
 
 /* ---- restart ---- */
