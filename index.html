@@ -256,7 +256,7 @@
   <!-- STAGE 2: CALIBRATE -->
   <section class="panel" id="panel-calibrate">
     <h2>Calibrate</h2>
-    <div class="sub">Cleaning pass: duplicates, missing values, dead columns, inconsistent category spellings, and outliers all get handled here before any model sees the data.</div>
+    <div class="sub">Cleaning pass: duplicates, missing values, dead columns, inconsistent category spellings, and outliers all get handled here — before any model sees the data.</div>
     <div class="checkrow" style="margin-bottom:14px;">
       <input type="checkbox" id="chk-cap-outliers">
       <label for="chk-cap-outliers">Cap extreme outliers to the IQR bound (winsorize) instead of leaving them as-is</label>
@@ -375,6 +375,10 @@
    ========================================================================= */
 
 const STAGES = ['intake','calibrate','train','impact'];
+
+// Shown as a clickable link at the bottom of the downloaded PDF report.
+// Update this if your Ballistic AI deployment URL changes.
+const SOURCE_URL = 'https://ballistic-02.github.io/Ballistic.ai/';
 let currentStage = 'intake';
 
 const state = {
@@ -1345,10 +1349,11 @@ document.getElementById('btn-predict').addEventListener('click', ()=>{
   const t = tf.tensor2d([input]);
   const predT = state.model.predict(t);
   const out = predT.dataSync();
-  let display;
+  let display, confidence;
   if (state.taskType === 'classification'){
     const cats = state.targetEncoder.categories;
     const idx = out.indexOf(Math.max(...out));
+    confidence = out[idx];
     display = `${cats[idx]}  <span style="font-size:14px;color:var(--text-dim);">(${(out[idx]*100).toFixed(1)}% confidence)</span>`;
   } else {
     const {min,max} = state.targetEncoder;
@@ -1356,7 +1361,11 @@ document.getElementById('btn-predict').addEventListener('click', ()=>{
   }
   document.getElementById('readout').classList.remove('hidden');
   document.getElementById('readout-val').innerHTML = display;
-  state.lastPrediction = {display: display.replace(/<[^>]+>/g,'').trim(), inputs: state.featureCols.map((h,i)=>({name:h, value: document.getElementById('pred-'+h).value}))};
+  state.lastPrediction = {
+    display: display.replace(/<[^>]+>/g,'').trim(),
+    confidence,
+    inputs: state.featureCols.map((h,i)=>({name:h, value: document.getElementById('pred-'+h).value}))
+  };
   t.dispose(); predT.dispose();
 });
 
@@ -1404,10 +1413,13 @@ document.getElementById('btn-download-report').addEventListener('click', ()=>{
     doc.setDrawColor(200,140,90); doc.setLineWidth(0.3);
     doc.line(marginX, y-4.5, marginX+maxWidth, y-4.5);
   }
-  function body(text){
-    doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(60,60,60);
+  function body(text, opts){
+    const size = (opts && opts.size) || 10.5;
+    doc.setFont('helvetica', (opts && opts.bold) ? 'bold' : 'normal');
+    doc.setFontSize(size);
+    doc.setTextColor(60,60,60);
     const lines = doc.splitTextToSize(text, maxWidth);
-    lines.forEach(line=>{ ensureSpace(6); doc.text(line, marginX, y); y += 5.5; });
+    lines.forEach(line=>{ ensureSpace(size*0.6); doc.text(line, marginX, y); y += size*0.55; });
   }
   function labelValue(label, value){
     ensureSpace(6);
@@ -1418,16 +1430,85 @@ document.getElementById('btn-download-report').addEventListener('click', ()=>{
     y += 6;
   }
 
-  // Title
+  // Plain-language descriptors — no stats jargon, meant for a reader who
+  // has never seen R² or a confusion matrix.
+  function plainFit(r2){
+    if (r2 >= 0.9) return 'very reliable: its predictions closely match reality';
+    if (r2 >= 0.7) return 'fairly reliable: it captures the main pattern in the data';
+    if (r2 >= 0.5) return 'somewhat reliable: it has found a real pattern, but there is still a lot it cannot explain';
+    if (r2 >= 0.2) return 'not very reliable: treat its predictions as rough guesses, not firm numbers';
+    return "not reliable: it hasn't found a meaningful pattern in this data yet";
+  }
+  function plainConfidence(frac){
+    if (frac >= 0.85) return 'The model is very confident about this answer.';
+    if (frac >= 0.6) return 'The model is somewhat confident about this answer.';
+    return "The model isn't very sure here, treat this as a rough guess.";
+  }
+
+  // ===== Title =====
   doc.setFont('helvetica','bold'); doc.setFontSize(19); doc.setTextColor(20,20,20);
-  doc.text('BALLISTIC AI — Model Report', marginX, y);
+  doc.text('BALLISTIC AI Prediction Report', marginX, y);
   y += 6;
   doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(130,130,130);
   doc.text(`Generated ${new Date().toLocaleString()}`, marginX, y);
-  y += 10;
+  y += 12;
 
-  // Dataset & task
-  heading('Dataset & Task');
+  // ===== Plain-English summary (the main thing most readers want) =====
+  heading('Summary');
+
+  if (state.taskType === 'classification'){
+    const {topFrac} = getMajorityClass();
+    body(`This model looks at your data and predicts a category for "${state.target}". Out of 100 new examples it hasn't seen before, it gets about ${(state.metrics.accuracy*100).toFixed(0)} right.`);
+    if (state.metrics.accuracy > topFrac + 0.05){
+      body('That is meaningfully better than just guessing the most common category every time, so the model has genuinely learned something useful from the data.');
+    } else {
+      body('That is close to what you would get by just guessing the most common category every time, so treat this model with some caution.');
+    }
+  } else if (state.taskType === 'regression'){
+    body(`This model predicts a number for "${state.target}" based on the other columns in your data. Overall, it is ${plainFit(state.metrics.r2)}.`);
+    body(`On a typical new row, its prediction is off by about ${state.metrics.rmse.toFixed(2)}.`);
+  } else {
+    body(`This model looks at how "${state.target}" has changed over time and predicts what comes next. Overall, it is ${plainFit(state.metrics.r2)}.`);
+    body(`On a typical step, its prediction is off by about ${state.metrics.rmse.toFixed(2)}.`);
+    if (state.lastForecast && state.lastForecast.length > 1){
+      const f = state.lastForecast;
+      const delta = f[f.length-1] - f[0];
+      const pct = f[0] !== 0 ? (delta/Math.abs(f[0])*100) : 0;
+      if (Math.abs(pct) < 3) body(`Looking ahead, it expects "${state.target}" to stay roughly flat.`);
+      else if (pct > 0) body(`Looking ahead, it expects "${state.target}" to trend upward by roughly ${pct.toFixed(0)}% over the forecast window.`);
+      else body(`Looking ahead, it expects "${state.target}" to trend downward by roughly ${Math.abs(pct).toFixed(0)}% over the forecast window.`);
+    }
+  }
+
+  // Feature importance, in plain terms
+  if (state.featureCols && state.featureCols.length){
+    const layer0 = state.model.layers[0];
+    const weights = layer0.getWeights()[0].arraySync();
+    const importance = weights.map(row => row.reduce((s,v)=>s+Math.abs(v),0));
+    const total = importance.reduce((a,b)=>a+b,0) || 1;
+    const ranked = state.featureCols.map((h,i)=>({name:h, pct: importance[i]/total*100}))
+      .sort((a,b)=>b.pct-a.pct);
+    const top = ranked.slice(0, Math.min(2, ranked.length)).map(f=>`"${f.name}"`).join(' and ');
+    body(`The columns that mattered most to the model were ${top}.`);
+  }
+
+  // Live prediction, in plain terms — the headline result if one exists
+  if (state.lastPrediction){
+    y += 2;
+    doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(180,110,60);
+    ensureSpace(8);
+    doc.text('Your prediction:', marginX, y);
+    y += 6.5;
+    doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(60,60,60);
+    body(`Based on the values you entered (${state.lastPrediction.inputs.map(i=>`${i.name} = ${i.value}`).join(', ')}), Ballistic AI predicts: ${state.lastPrediction.display}.`);
+    if (state.taskType === 'classification' && state.lastPrediction.confidence !== undefined){
+      body(plainConfidence(state.lastPrediction.confidence));
+    }
+  }
+  y += 6;
+
+  // ===== Technical detail (for anyone who wants to dig deeper) =====
+  heading('Dataset & Task Details');
   labelValue('Target column', state.target);
   labelValue('Task type', state.taskType);
   labelValue('Rows used', state.cleanedRows.length);
@@ -1436,20 +1517,15 @@ document.getElementById('btn-download-report').addEventListener('click', ()=>{
   body(`Feature columns: ${state.featureCols.join(', ')}`);
   y += 4;
 
-  // Performance
-  heading('Performance');
+  heading('Performance Metrics');
   if (state.metrics.type === 'classification'){
     labelValue('Accuracy', (state.metrics.accuracy*100).toFixed(1)+'%');
     labelValue('Classes', state.metrics.cats.length);
     y += 2;
     body('Confusion matrix (rows = actual, columns = predicted):');
     const cats = state.metrics.cats, cm = state.metrics.cm;
-    const header = ['actual\\pred', ...cats].join('   ');
-    body(header);
-    cats.forEach(a=>{
-      const row = [a, ...cats.map(b=>String(cm[a][b]))].join('   ');
-      body(row);
-    });
+    body(['actual\\pred', ...cats].join('   '));
+    cats.forEach(a=> body([a, ...cats.map(b=>String(cm[a][b]))].join('   ')));
   } else {
     labelValue('R²', state.metrics.r2.toFixed(3));
     labelValue('RMSE', state.metrics.rmse.toFixed(2));
@@ -1457,7 +1533,6 @@ document.getElementById('btn-download-report').addEventListener('click', ()=>{
   }
   y += 4;
 
-  // Feature importance
   if (state.featureCols && state.featureCols.length){
     heading('Feature Importance (relative weight)');
     const layer0 = state.model.layers[0];
@@ -1467,14 +1542,6 @@ document.getElementById('btn-download-report').addEventListener('click', ()=>{
     const ranked = state.featureCols.map((h,i)=>({name:h, pct: importance[i]/total*100}))
       .sort((a,b)=>b.pct-a.pct);
     ranked.forEach(f=> body(`${f.name}: ${f.pct.toFixed(1)}%`));
-    y += 4;
-  }
-
-  // Live prediction (if one was made)
-  if (state.lastPrediction){
-    heading('Last Live Prediction');
-    body(`Inputs — ${state.lastPrediction.inputs.map(i=>`${i.name}=${i.value}`).join(', ')}`);
-    labelValue('Predicted output', state.lastPrediction.display);
     y += 4;
   }
 
@@ -1498,9 +1565,12 @@ document.getElementById('btn-download-report').addEventListener('click', ()=>{
     y += h + 8;
   }
 
-  ensureSpace(14);
+  // Footer with a real clickable link back to the tool that generated this.
+  ensureSpace(16);
   doc.setFont('helvetica','italic'); doc.setFontSize(8.5); doc.setTextColor(140,140,140);
-  doc.text('Built with Ballistic AI — a no-code prototyping tool. Validate anything high-stakes with a proper statistical review.', marginX, pageHeight-12);
+  doc.text('Built with Ballistic AI, a no-code prototyping tool. Validate anything high-stakes with a proper statistical review.', marginX, pageHeight-16);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(180,110,60);
+  doc.textWithLink('Generated at: ' + SOURCE_URL, marginX, pageHeight-11, {url: SOURCE_URL});
 
   const stamp = new Date().toISOString().slice(0,10);
   doc.save(`ballistic-ai-report-${state.target}-${stamp}.pdf`);
