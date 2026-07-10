@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Ballistic AI — Automated Model Builder</title>
+<title>Ballistic AI → Automated Model Builder</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
@@ -242,7 +242,7 @@
 
   <!-- STAGE 1: INTAKE -->
   <section class="panel active" id="panel-intake">
-    <h2>01 — Intake</h2>
+    <h2>Intake</h2>
     <div class="sub">Load a dataset. Ballistic AI reads every column and works out what it's looking at.</div>
 
     <div class="chart-box agent-panel" style="margin-bottom:22px;">
@@ -252,7 +252,7 @@
       </div>
 
       <div id="agent-key-panel" class="hidden" style="margin-bottom:14px;">
-        <label class="field-label">Anthropic API key — kept only in this browser tab, never written into the page or sent anywhere but Anthropic</label>
+        <label class="field-label">Anthropic API key → kept only in this browser tab, never written into the page or sent anywhere but Anthropic</label>
         <div class="agent-key-row">
           <input type="password" id="agent-api-key-input" placeholder="sk-ant-...">
           <button class="btn secondary" id="btn-agent-save-key">Save</button>
@@ -271,7 +271,7 @@
 
     <label class="dropzone" id="dropzone" for="fileInput">
       <strong>Drop a CSV here</strong> or click to browse<br>
-      <span style="font-size:12px;">any table — sales, sports stats, survey data, sensor logs...</span>
+      <span style="font-size:12px;">any table → sales, sports stats, survey data, sensor logs...</span>
     </label>
     <input type="file" id="fileInput" accept=".csv" style="display:none;" />
     <div id="intake-summary" class="hidden">
@@ -293,8 +293,8 @@
 
   <!-- STAGE 2: CALIBRATE -->
   <section class="panel" id="panel-calibrate">
-    <h2>02 — Calibrate</h2>
-    <div class="sub">Cleaning pass: duplicates, missing values, dead columns, inconsistent category spellings, and outliers all get handled here — before any model sees the data.</div>
+    <h2>Calibrate</h2>
+    <div class="sub">Cleaning pass: duplicates, missing values, dead columns, inconsistent category spellings, and outliers all get handled here before any model sees the data.</div>
     <div class="checkrow" style="margin-bottom:14px;">
       <input type="checkbox" id="chk-cap-outliers">
       <label for="chk-cap-outliers">Cap extreme outliers to the IQR bound (winsorize) instead of leaving them as-is</label>
@@ -308,7 +308,7 @@
 
   <!-- STAGE 3: TRAIN -->
   <section class="panel" id="panel-train">
-    <h2>03 — Train</h2>
+    <h2>Train</h2>
     <div class="sub">Pick a target. Ballistic AI infers the task, builds a network, and fires the training run.</div>
 
     <label class="field-label">Target column (what to predict)</label>
@@ -354,7 +354,7 @@
 
   <!-- STAGE 4: IMPACT -->
   <section class="panel" id="panel-impact">
-    <h2>04 — Impact</h2>
+    <h2>Impact</h2>
     <div class="sub">Results, live prediction, and what the model actually leaned on.</div>
 
     <div class="metric-cards" id="metric-cards"></div>
@@ -400,7 +400,7 @@
   </section>
 
   <div class="footer-note">
-    BALLISTIC AI — runs fully in your browser. Nothing you upload leaves this page.<br>
+    BALLISTIC AI runs fully in your browser. Nothing you upload leaves this page.<br>
     Built for quick, no-code model prototyping. Validate anything high-stakes with a proper statistical review.
   </div>
 
@@ -754,11 +754,11 @@ function runCalibration(){
   state.headers.forEach(h=>{
     const c = state.columns[h];
     if (c.isConstant){
-      log.push({type:'warn', text:`Dropped "<b>${h}</b>" — every value is identical, no signal to learn from.`});
+      log.push({type:'warn', text:`Dropped "<b>${h}</b>" every value is identical, no signal to learn from.`});
       return;
     }
     if (c.missingFrac > 0.5){
-      log.push({type:'warn', text:`Dropped "<b>${h}</b>" — ${(c.missingFrac*100).toFixed(0)}% missing, too sparse to impute reliably.`});
+      log.push({type:'warn', text:`Dropped "<b>${h}</b>" ${(c.missingFrac*100).toFixed(0)}% missing, too sparse to impute reliably.`});
       return;
     }
     keepCols.push(h);
@@ -770,7 +770,7 @@ function runCalibration(){
       const {map, mergedAny} = buildCategoryCanonicalMap(rawVals);
       if (mergedAny){
         cleaned.forEach(r=>{ if(!isMissing(r[h])) r[h] = map[r[h]] ?? r[h]; });
-        log.push({type:'ok', text:`Normalized "<b>${h}</b>" — merged category spellings that only differed by case or spacing.`});
+        log.push({type:'ok', text:`Normalized "<b>${h}</b>" merged category spellings that only differed by case or spacing.`});
       }
     }
 
@@ -805,15 +805,15 @@ function runCalibration(){
         });
         log.push({type:'ok', text:`Capped ${cappedCount} extreme value(s) in "<b>${h}</b>" to the IQR bound [${lower.toFixed(2)}, ${upper.toFixed(2)}].`});
       } else {
-        log.push({type:'warn', text:`"<b>${h}</b>" has ${c.outliers.count} value(s) outside the normal IQR range — left as-is. Tick "cap extreme outliers" above and re-run if you want these pulled in.`});
+        log.push({type:'warn', text:`"<b>${h}</b>" has ${c.outliers.count} value(s) outside the normal IQR range left as-is. Tick "cap extreme outliers" above and re-run if you want these pulled in.`});
       }
     }
 
     if (c.highCardinality){
-      log.push({type:'', text:`"<b>${h}</b>" has ${c.unique} distinct categories — high-cardinality, likely to add noise rather than signal. Unchecked in feature selection by default.`});
+      log.push({type:'', text:`"<b>${h}</b>" has ${c.unique} distinct categories high-cardinality, likely to add noise rather than signal. Unchecked in feature selection by default.`});
     }
     if (c.isIdLike){
-      log.push({type:'', text:`"<b>${h}</b>" looks like an identifier (all unique values) — excluded from features by default.`});
+      log.push({type:'', text:`"<b>${h}</b>" looks like an identifier (all unique values) excluded from features by default.`});
     }
   });
 
@@ -896,7 +896,7 @@ function updateTaskNote(auto){
   const imbalanceNote = document.getElementById('imbalance-note');
   imbalanceNote.textContent = '';
   if (state.taskType === 'timeseries'){
-    note.textContent = `Ballistic AI will build lag features from "${state.target}" (using row order) and forecast forward — other columns are ignored in this mode.`;
+    note.textContent = `Ballistic AI will build lag features from "${state.target}" (using row order) and forecast forward, other columns are ignored in this mode.`;
     wrap.classList.add('hidden');
   } else {
     note.textContent = state.taskType === auto
@@ -923,7 +923,7 @@ function checkClassImbalance(){
   const {topLabel, topFrac, numClasses} = getMajorityClass();
   const note = document.getElementById('imbalance-note');
   if (topFrac > 0.8 && numClasses > 1){
-    note.textContent = `⚠ Class imbalance: "${topLabel}" makes up ${(topFrac*100).toFixed(0)}% of rows. A model that always guesses "${topLabel}" would already score ${(topFrac*100).toFixed(0)}% accuracy without learning anything — treat the accuracy metric on the Impact page with that in mind.`;
+    note.textContent = `⚠ Class imbalance: "${topLabel}" makes up ${(topFrac*100).toFixed(0)}% of rows. A model that always guesses "${topLabel}" would already score ${(topFrac*100).toFixed(0)}% accuracy without learning anything, treat the accuracy metric on the Impact page with that in mind.`;
   } else {
     note.textContent = '';
   }
@@ -937,8 +937,8 @@ function renderFeaturePicker(){
     const col = state.columns[h];
     const excludeByDefault = col.isIdLike || col.highCardinality;
     let note = '';
-    if (col.isIdLike) note = ' <span style="color:var(--text-dim);font-size:11px;">(identifier — unchecked by default)</span>';
-    else if (col.highCardinality) note = ' <span style="color:var(--text-dim);font-size:11px;">(high-cardinality — unchecked by default)</span>';
+    if (col.isIdLike) note = ' <span style="color:var(--text-dim);font-size:11px;">(identifier unchecked by default)</span>';
+    else if (col.highCardinality) note = ' <span style="color:var(--text-dim);font-size:11px;">(high-cardinality unchecked by default)</span>';
     return `<div class="checkrow">
       <input type="checkbox" value="${h}" ${excludeByDefault?'':'checked'} id="feat-${h}">
       <label for="feat-${h}">${h} <span class="tag ${col.type}" style="margin-left:6px;">${col.type}</span>${note}</label>
@@ -1476,16 +1476,16 @@ document.getElementById('btn-download-report').addEventListener('click', ()=>{
   // Plain-language descriptors — no stats jargon, meant for a reader who
   // has never seen R² or a confusion matrix.
   function plainFit(r2){
-    if (r2 >= 0.9) return 'very reliable — its predictions closely match reality';
-    if (r2 >= 0.7) return 'fairly reliable — it captures the main pattern in the data';
-    if (r2 >= 0.5) return 'somewhat reliable — it has found a real pattern, but there is still a lot it cannot explain';
-    if (r2 >= 0.2) return 'not very reliable — treat its predictions as rough guesses, not firm numbers';
-    return "not reliable — it hasn't found a meaningful pattern in this data yet";
+    if (r2 >= 0.9) return 'very reliable, its predictions closely match reality';
+    if (r2 >= 0.7) return 'fairly reliable, it captures the main pattern in the data';
+    if (r2 >= 0.5) return 'somewhat reliable, it has found a real pattern, but there is still a lot it cannot explain';
+    if (r2 >= 0.2) return 'not very reliable, treat its predictions as rough guesses, not firm numbers';
+    return "not reliable, it hasn't found a meaningful pattern in this data yet";
   }
   function plainConfidence(frac){
     if (frac >= 0.85) return 'The model is very confident about this answer.';
     if (frac >= 0.6) return 'The model is somewhat confident about this answer.';
-    return "The model isn't very sure here — treat this as a rough guess.";
+    return "The model isn't very sure here, treat this as a rough guess.";
   }
 
   // ===== Title =====
@@ -1659,7 +1659,7 @@ document.getElementById('btn-agent-clear-key').addEventListener('click', ()=>{
 // the model does its own explaining rather than us pre-writing its answer.
 function buildAgentContext(){
   const lines = [];
-  lines.push(`You are a helpful, plain-language assistant embedded inside "Ballistic AI", a no-code tool that lets people upload a CSV and walks them through cleaning it, training a small model on it, and interpreting the results. The person you're talking to may not have a data science background — avoid jargon where possible, or briefly explain any term you use. Keep answers concise (a few sentences, occasionally a short paragraph) unless asked for more detail. Be honest about the limitations of a quick browser-trained model; don't oversell it. You can be asked about the tool itself (how it works, what a column type means, what task type to pick), about a dataset that's been loaded but not yet trained on, or about a finished model's results — answer whichever applies given the context below.`);
+  lines.push(`You are a helpful, plain-language assistant embedded inside "Ballistic AI", a no-code tool that lets people upload a CSV and walks them through cleaning it, training a small model on it, and interpreting the results. The person you're talking to may not have a data science background, avoid jargon where possible, or briefly explain any term you use. Keep answers concise (a few sentences, occasionally a short paragraph) unless asked for more detail. Be honest about the limitations of a quick browser-trained model; don't oversell it. You can be asked about the tool itself (how it works, what a column type means, what task type to pick), about a dataset that's been loaded but not yet trained on, or about a finished model's results, answer whichever applies given the context below.`);
   lines.push('');
 
   if (!state.rawRows || state.rawRows.length === 0){
@@ -1813,7 +1813,7 @@ function maybeSendProactiveTip(){
     renderAgentSystemNote('Add your Anthropic API key above to get an instant read on these results and ask follow-up questions.');
     return;
   }
-  callAgent("Give me a quick, plain-English take on these results — is this model any good, and is there anything I should be careful about before trusting its predictions?");
+  callAgent("Give me a quick, plain-English take on these results, is this model any good, and is there anything I should be careful about before trusting its predictions?");
 }
 
 /* ---- restart ---- */
