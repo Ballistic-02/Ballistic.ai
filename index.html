@@ -248,11 +248,19 @@
     <div class="chart-box agent-panel" style="margin-bottom:22px;">
       <div class="flex-between" style="margin-bottom:10px;">
         <div style="font-size:11px;letter-spacing:0.06em;color:var(--brass);text-transform:uppercase;">Ask Ballistic AI</div>
-        <button class="btn secondary" id="btn-agent-toggle-key" style="padding:5px 12px;font-size:11.5px;">API key</button>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <span class="small-note" id="agent-tier-status" style="margin:0;"></span>
+          <button class="btn secondary" id="btn-agent-toggle-key" style="padding:5px 12px;font-size:11.5px;">API key</button>
+        </div>
+      </div>
+
+      <div class="radiogroup" id="agent-tier-toggle" style="margin-bottom:12px;">
+        <div class="radiopill" data-tier="free">Free tier (10/day)</div>
+        <div class="radiopill" data-tier="own">My own API key</div>
       </div>
 
       <div id="agent-key-panel" class="hidden" style="margin-bottom:14px;">
-        <label class="field-label">Anthropic API key → kept only in this browser tab, never written into the page or sent anywhere but Anthropic</label>
+        <label class="field-label">Anthropic API key — kept only in this browser tab, never written into the page or sent anywhere but Anthropic</label>
         <div class="agent-key-row">
           <input type="password" id="agent-api-key-input" placeholder="sk-ant-...">
           <button class="btn secondary" id="btn-agent-save-key">Save</button>
@@ -417,6 +425,12 @@ const STAGES = ['intake','calibrate','train','impact'];
 // Shown as a clickable link at the bottom of the downloaded PDF report.
 // Update this if your Ballistic AI deployment URL changes.
 const SOURCE_URL = 'https://ballistic-02.github.io/Ballistic.ai/';
+
+// Free-tier chat proxy (Cloudflare Worker) — see ballistic-ai-worker.js for
+// the server-side code and deployment steps. Paste your deployed Worker's
+// URL here once it's live; until then the free tier stays unavailable and
+// the agent will only work via "bring your own key".
+const WORKER_URL = 'https://ballistic-ai-proxy.boluwatifeadeoye02.workers.dev';
 let currentStage = 'intake';
 
 const state = {
@@ -443,6 +457,8 @@ const state = {
   lastForecast: null,
   lastPrediction: null,
   apiKey: sessionStorage.getItem('ballistic_ai_api_key') || null,
+  agentTier: 'free',      // 'free' | 'own'
+  freeRemaining: null,    // updated from the Worker's response
   chatMessages: [],   // [{role:'user'|'assistant', content}] sent to the API
   agentBusy: false
 };
@@ -754,11 +770,11 @@ function runCalibration(){
   state.headers.forEach(h=>{
     const c = state.columns[h];
     if (c.isConstant){
-      log.push({type:'warn', text:`Dropped "<b>${h}</b>" every value is identical, no signal to learn from.`});
+      log.push({type:'warn', text:`Dropped "<b>${h}</b>" — every value is identical, no signal to learn from.`});
       return;
     }
     if (c.missingFrac > 0.5){
-      log.push({type:'warn', text:`Dropped "<b>${h}</b>" ${(c.missingFrac*100).toFixed(0)}% missing, too sparse to impute reliably.`});
+      log.push({type:'warn', text:`Dropped "<b>${h}</b>" — ${(c.missingFrac*100).toFixed(0)}% missing, too sparse to impute reliably.`});
       return;
     }
     keepCols.push(h);
@@ -810,7 +826,7 @@ function runCalibration(){
     }
 
     if (c.highCardinality){
-      log.push({type:'', text:`"<b>${h}</b>" has ${c.unique} distinct categories high-cardinality, likely to add noise rather than signal. Unchecked in feature selection by default.`});
+      log.push({type:'', text:`"<b>${h}</b>" has ${c.unique} distinct categories, high-cardinality, likely to add noise rather than signal. Unchecked in feature selection by default.`});
     }
     if (c.isIdLike){
       log.push({type:'', text:`"<b>${h}</b>" looks like an identifier (all unique values) excluded from features by default.`});
@@ -937,8 +953,8 @@ function renderFeaturePicker(){
     const col = state.columns[h];
     const excludeByDefault = col.isIdLike || col.highCardinality;
     let note = '';
-    if (col.isIdLike) note = ' <span style="color:var(--text-dim);font-size:11px;">(identifier unchecked by default)</span>';
-    else if (col.highCardinality) note = ' <span style="color:var(--text-dim);font-size:11px;">(high-cardinality unchecked by default)</span>';
+    if (col.isIdLike) note = ' <span style="color:var(--text-dim);font-size:11px;">(identifier is unchecked by default)</span>';
+    else if (col.highCardinality) note = ' <span style="color:var(--text-dim);font-size:11px;">(high-cardinality is unchecked by default)</span>';
     return `<div class="checkrow">
       <input type="checkbox" value="${h}" ${excludeByDefault?'':'checked'} id="feat-${h}">
       <label for="feat-${h}">${h} <span class="tag ${col.type}" style="margin-left:6px;">${col.type}</span>${note}</label>
@@ -1611,7 +1627,7 @@ document.getElementById('btn-download-report').addEventListener('click', ()=>{
   // Footer with a real clickable link back to the tool that generated this.
   ensureSpace(16);
   doc.setFont('helvetica','italic'); doc.setFontSize(8.5); doc.setTextColor(140,140,140);
-  doc.text('Built with Ballistic AI — a no-code prototyping tool. Validate anything high-stakes with a proper statistical review.', marginX, pageHeight-16);
+  doc.text('Built with Ballistic AI, a no-code prototyping tool. Validate anything high-stakes with a proper statistical review.', marginX, pageHeight-16);
   doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(180,110,60);
   doc.textWithLink('Generated at: ' + SOURCE_URL, marginX, pageHeight-11, {url: SOURCE_URL});
 
@@ -1654,12 +1670,37 @@ document.getElementById('btn-agent-clear-key').addEventListener('click', ()=>{
   renderAgentSystemNote('API key cleared.');
 });
 
+// Tier toggle: 'free' uses the Cloudflare Worker proxy (no key needed,
+// capped daily), 'own' calls Anthropic directly with the visitor's key.
+document.getElementById('agent-tier-toggle').querySelectorAll('.radiopill').forEach(pill=>{
+  pill.addEventListener('click', ()=>{
+    state.agentTier = pill.dataset.tier;
+    updateAgentTierUI();
+  });
+});
+
+function updateAgentTierUI(){
+  document.getElementById('agent-tier-toggle').querySelectorAll('.radiopill').forEach(p=>{
+    p.classList.toggle('selected', p.dataset.tier === state.agentTier);
+  });
+  const status = document.getElementById('agent-tier-status');
+  if (state.agentTier === 'free'){
+    status.textContent = state.freeRemaining !== null ? `${state.freeRemaining} free left today` : '';
+    document.getElementById('btn-agent-toggle-key').style.display = 'none';
+    document.getElementById('agent-key-panel').classList.add('hidden');
+  } else {
+    status.textContent = state.apiKey ? 'using your key' : 'no key saved';
+    document.getElementById('btn-agent-toggle-key').style.display = '';
+  }
+}
+updateAgentTierUI();
+
 // Compact, factual summary of the current model — this is what lets the
 // agent give grounded answers instead of generic advice. Raw facts only;
 // the model does its own explaining rather than us pre-writing its answer.
 function buildAgentContext(){
   const lines = [];
-  lines.push(`You are a helpful, plain-language assistant embedded inside "Ballistic AI", a no-code tool that lets people upload a CSV and walks them through cleaning it, training a small model on it, and interpreting the results. The person you're talking to may not have a data science background, avoid jargon where possible, or briefly explain any term you use. Keep answers concise (a few sentences, occasionally a short paragraph) unless asked for more detail. Be honest about the limitations of a quick browser-trained model; don't oversell it. You can be asked about the tool itself (how it works, what a column type means, what task type to pick), about a dataset that's been loaded but not yet trained on, or about a finished model's results, answer whichever applies given the context below.`);
+  lines.push(`You are a helpful, plain-language assistant embedded inside "Ballistic AI", a no-code tool that lets people upload a CSV and walks them through cleaning it, training a small model on it, and interpreting the results. The person you're talking to may not have a data science background and avoid jargon where possible, or briefly explain any term you use. Keep answers concise (a few sentences, occasionally a short paragraph) unless asked for more detail. Be honest about the limitations of a quick browser-trained model; don't oversell it. You can be asked about the tool itself (how it works, what a column type means, what task type to pick), about a dataset that's been loaded but not yet trained on, or about a finished model's results, answer whichever applies given the context below.`);
   lines.push('');
 
   if (!state.rawRows || state.rawRows.length === 0){
@@ -1711,8 +1752,8 @@ function buildAgentContext(){
 }
 
 async function callAgent(userText){
-  if (!state.apiKey){
-    renderAgentSystemNote("Add your Anthropic API key above (click \"API key\") to chat and get tips.");
+  if (state.agentTier === 'own' && !state.apiKey){
+    renderAgentSystemNote("Add your Anthropic API key above (click \"API key\"), or switch to the free tier, to chat.");
     return;
   }
   state.chatMessages.push({role:'user', content: userText});
@@ -1721,39 +1762,59 @@ async function callAgent(userText){
   renderAgentTyping(true);
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': state.apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify({
-        model: AGENT_MODEL,
-        max_tokens: 500,
-        system: buildAgentContext(),
-        messages: state.chatMessages.map(m=>({role:m.role, content:m.content}))
-      })
-    });
-    const data = await response.json();
+    let response, data;
+    if (state.agentTier === 'free'){
+      response = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          max_tokens: 500,
+          system: buildAgentContext(),
+          messages: state.chatMessages.map(m=>({role:m.role, content:m.content}))
+        })
+      });
+      data = await response.json();
+      if (typeof data.remaining === 'number') state.freeRemaining = data.remaining;
+    } else {
+      response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': state.apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: AGENT_MODEL,
+          max_tokens: 500,
+          system: buildAgentContext(),
+          messages: state.chatMessages.map(m=>({role:m.role, content:m.content}))
+        })
+      });
+      data = await response.json();
+    }
+
     if (!response.ok || data.type === 'error'){
       const msg = (data.error && data.error.message) || `Request failed (${response.status})`;
       let friendly = msg;
-      if (response.status === 401) friendly = 'That API key was rejected — double-check it was copied correctly.';
-      if (response.status === 429) friendly = "Rate limited — wait a moment and try again.";
+      if (response.status === 401) friendly = 'That API key was rejected, double-check it was copied correctly.';
+      if (response.status === 429 && data.limitReached) friendly = msg; // Worker's own message is already friendly
+      else if (response.status === 429) friendly = "Rate limited, wait a moment and try again.";
       state.chatMessages.pop(); // don't keep the failed turn in history
       renderAgentMessages();
       renderAgentError(friendly);
+      updateAgentTierUI();
       return;
     }
     const text = data.content.filter(b=>b.type==='text').map(b=>b.text).join('\n');
     state.chatMessages.push({role:'assistant', content: text});
     renderAgentMessages();
+    updateAgentTierUI();
   } catch (err){
     state.chatMessages.pop();
     renderAgentMessages();
-    renderAgentError('Could not reach the API — check your connection, or that no browser extension is blocking api.anthropic.com.');
+    const source = state.agentTier === 'free' ? 'the free-tier service' : 'api.anthropic.com';
+    renderAgentError(`Could not reach ${source}, check your connection, or that no browser extension is blocking the request.`);
   } finally {
     state.agentBusy = false;
     renderAgentTyping(false);
@@ -1809,11 +1870,11 @@ document.getElementById('agent-chat-input').addEventListener('keydown', e=>{
 function maybeSendProactiveTip(){
   state.chatMessages = [];
   document.getElementById('agent-messages').innerHTML = '';
-  if (!state.apiKey){
-    renderAgentSystemNote('Add your Anthropic API key above to get an instant read on these results and ask follow-up questions.');
+  if (state.agentTier === 'own' && !state.apiKey){
+    renderAgentSystemNote('Add your Anthropic API key above, or switch to the free tier, to get an instant read on these results.');
     return;
   }
-  callAgent("Give me a quick, plain-English take on these results, is this model any good, and is there anything I should be careful about before trusting its predictions?");
+  callAgent("Give me a quick, plain-English take on these results. Is this model any good, and is there anything I should be careful about before trusting its predictions?");
 }
 
 /* ---- restart ---- */
