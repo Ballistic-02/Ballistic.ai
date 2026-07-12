@@ -8,7 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tensorflow/4.22.0/tf.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.0/chart.umd.min.js"></script>
 <style>
   :root{
     --bg:#14171C;
@@ -191,124 +191,117 @@
   .flex-between{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;}
   .small-note{font-size:11.5px;color:var(--text-dim);margin-top:8px;}
 
-  /* ==================== CHATBOX CSS UPGRADES ==================== */
-  .chat-panel {
+  /* INTEGRATED STICKY CHATBOX MODIFICATIONS */
+  .chat-widget {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 340px;
+    height: 420px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 6px;
-    margin-top: 24px;
-    overflow: hidden;
+    border-radius: 8px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.5);
     display: flex;
     flex-direction: column;
+    z-index: 1000;
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), height 0.3s;
+  }
+  .chat-widget.minimized {
+    height: 44px;
+    transform: translateY(0);
   }
   .chat-header {
-    background: var(--surface-2);
+    background: linear-gradient(90deg, var(--surface-2) 0%, var(--surface) 100%);
+    padding: 12px 16px;
     border-bottom: 1px solid var(--border);
-    padding: 14px 20px;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    cursor: pointer;
+    border-top-left-radius: 7px;
+    border-top-right-radius: 7px;
   }
   .chat-header h3 {
-    font-size: 14px;
-    font-family: 'Space Grotesk', sans-serif;
+    font-size: 13px;
     letter-spacing: 0.05em;
+    color: var(--text);
+  }
+  .chat-header h3 span {
     color: var(--brass);
   }
-  .chat-status {
-    font-size: 11px;
-    font-family: 'IBM Plex Mono', monospace;
-    color: var(--success);
+  .chat-toggle-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
   }
-  .chat-logs {
-    max-height: 250px;
-    min-height: 140px;
+  .chat-body {
+    flex: 1;
     overflow-y: auto;
-    padding: 16px;
+    padding: 14px;
     display: flex;
     flex-direction: column;
     gap: 12px;
-    background: rgba(20, 23, 28, 0.4);
+  }
+  .chat-widget.minimized .chat-body,
+  .chat-widget.minimized .chat-footer {
+    display: none;
   }
   .chat-msg {
     max-width: 85%;
-    padding: 10px 14px;
+    padding: 8px 12px;
     border-radius: 6px;
-    font-size: 13px;
+    font-size: 12.5px;
     line-height: 1.45;
   }
   .chat-msg.assistant {
     background: var(--surface-2);
     color: var(--text);
     align-self: flex-start;
-    border-left: 3px solid var(--brass);
+    border-left: 2px solid var(--brass);
   }
   .chat-msg.user {
-    background: rgba(91, 124, 153, 0.15);
+    background: rgba(91,124,153,0.15);
     color: var(--text);
     align-self: flex-end;
-    border-right: 3px solid var(--steel);
+    border-right: 2px solid var(--steel);
   }
-  .chat-msg code {
-    font-family: 'IBM Plex Mono', monospace;
-    background: rgba(0,0,0,0.2);
-    padding: 2px 4px;
-    border-radius: 3px;
-    color: #dfc1a4;
-  }
-  .chat-presets {
+  .chat-footer {
+    padding: 10px 14px;
+    border-top: 1px solid var(--border);
     display: flex;
     gap: 8px;
-    padding: 10px 16px;
-    background: var(--surface);
-    border-top: 1px solid var(--border);
-    flex-wrap: wrap;
   }
-  .preset-btn {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text-dim);
-    font-size: 11px;
-    padding: 5px 10px;
-    border-radius: 12px;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .preset-btn:hover {
-    border-color: var(--brass);
-    color: var(--brass);
-    background: rgba(192, 133, 82, 0.05);
-  }
-  .chat-input-row {
-    display: flex;
-    border-top: 1px solid var(--border);
-    background: var(--surface-2);
-  }
-  .chat-input-row input {
+  .chat-input {
     flex: 1;
-    background: transparent;
-    border: none;
-    padding: 14px 18px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
     color: var(--text);
-    font-size: 13.5px;
+    padding: 8px 10px;
+    border-radius: 4px;
+    font-size: 12.5px;
   }
-  .chat-input-row input:focus {
+  .chat-input:focus {
     outline: none;
+    border-color: var(--brass);
   }
   .chat-send-btn {
-    background: transparent;
+    background: var(--brass);
+    color: #181310;
     border: none;
-    border-left: 1px solid var(--border);
-    color: var(--brass);
+    padding: 0 14px;
+    border-radius: 4px;
     font-family: 'Space Grotesk', sans-serif;
     font-weight: 600;
-    padding: 0 20px;
+    font-size: 12px;
     cursor: pointer;
-    font-size: 13px;
-    transition: background 0.15s;
   }
   .chat-send-btn:hover {
-    background: rgba(192, 133, 82, 0.08);
+    background: #d4986a;
   }
 </style>
 </head>
@@ -374,7 +367,11 @@
   <!-- STAGE 2: CALIBRATE -->
   <section class="panel" id="panel-calibrate">
     <h2>02 — Calibrate</h2>
-    <div class="sub">Cleaning pass: missing values, dead columns, and encoding get handled automatically.</div>
+    <div class="sub">Cleaning pass: duplicates, missing values, dead columns, inconsistent category spellings, and outliers all get handled here — before any model sees the data.</div>
+    <div class="checkrow" style="margin-bottom:14px;">
+      <input type="checkbox" id="chk-cap-outliers">
+      <label for="chk-cap-outliers">Cap extreme outliers to the IQR bound (winsorize) instead of leaving them as-is</label>
+    </div>
     <button class="btn" id="btn-run-calibration">Run calibration</button>
     <div id="calibration-log" style="margin-top:18px;"></div>
     <div style="margin-top:22px;text-align:right;" id="calibrate-next" class="hidden">
@@ -395,6 +392,7 @@
     <label class="field-label">Task type</label>
     <div class="radiogroup" id="task-radiogroup"></div>
     <div class="small-note" id="task-note"></div>
+    <div class="small-note" id="imbalance-note" style="color:var(--brass);"></div>
 
     <div id="feature-picker-wrap" style="margin-top:18px;">
       <label class="field-label">Feature columns to use</label>
@@ -434,6 +432,11 @@
 
     <div class="metric-cards" id="metric-cards"></div>
 
+    <div class="chart-box" id="explainer-box" style="border-color:var(--brass-dim);">
+      <div style="font-size:11px;letter-spacing:0.06em;color:var(--brass);text-transform:uppercase;margin-bottom:10px;">In plain terms</div>
+      <div id="plain-explainer" style="font-size:14px;line-height:1.65;color:var(--text);"></div>
+    </div>
+
     <div class="chart-box"><canvas id="resultChart" height="120"></canvas></div>
 
     <div id="confusion-wrap" class="hidden">
@@ -460,6 +463,7 @@
         <svg class="crosshair" width="34" height="34" viewBox="0 0 34 34"><circle cx="17" cy="17" r="12" fill="none" stroke="#C08552" stroke-width="1.3"/><circle cx="17" cy="17" r="4" fill="none" stroke="#C08552" stroke-width="1.3"/><line x1="17" y1="0" x2="17" y2="8" stroke="#C08552" stroke-width="1.3"/><line x1="17" y1="26" x2="17" y2="34" stroke="#C08552" stroke-width="1.3"/><line x1="0" y1="17" x2="8" y2="17" stroke="#C08552" stroke-width="1.3"/><line x1="26" y1="17" x2="34" y2="17" stroke="#C08552" stroke-width="1.3"/></svg>
         <div class="rlabel">Predicted output</div>
         <div class="rval" id="readout-val">—</div>
+        <div class="small-note" id="readout-note" style="margin-top:8px;"></div>
       </div>
     </div>
 
@@ -468,27 +472,22 @@
     </div>
   </section>
 
-  <!-- ==================== OPERATIONAL CHATBOX INTERFACE ==================== -->
-  <section class="chat-panel">
-    <div class="chat-header">
-      <h3>TRAJECTORY ASSISTANT</h3>
-      <div class="chat-status" id="chat-status">● PIPELINE ONLINE</div>
+  <!-- INTEGRATED CO-PILOT CHATBOX PANEL -->
+  <div class="chat-widget minimized" id="chatWidget">
+    <div class="chat-header" id="chatHeader">
+      <h3 class="mono">BALLISTIC // <span>CO-PILOT</span></h3>
+      <button class="chat-toggle-btn" id="chatToggleBtn">+</button>
     </div>
-    <div class="chat-logs" id="chat-logs">
+    <div class="chat-body" id="chatBody">
       <div class="chat-msg assistant">
-        Welcome to **Ballistic AI**. Load up a CSV data pipeline file in the Intake stage above, and I will track metrics, diagnose architecture options, or provide custom optimization recommendations right here.
+        System active. I can report on the current pipeline stage, analyze missing metrics, or inspect features. Drop a file to begin or type a prompt.
       </div>
     </div>
-    <div class="chat-presets">
-      <button class="preset-btn" onclick="sendPreset('Optimize Pipeline')">Data Optimization Guide</button>
-      <button class="preset-btn" onclick="sendPreset('Model Design Summary')">Analyze Network Architecture</button>
-      <button class="preset-btn" onclick="sendPreset('Interpret Performance Metrics')">Interpret Results</button>
+    <div class="chat-footer">
+      <input type="text" class="chat-input" id="chatInput" placeholder="Ask about current pipeline or data..." autocomplete="off" />
+      <button class="chat-send-btn" id="chatSendBtn">Send</button>
     </div>
-    <div class="chat-input-row">
-      <input type="text" id="chat-input" placeholder="Ask about architecture adjustments, loss graphs, or engineering optimization..." onkeydown="if(event.key === 'Enter') handleSendChat()" />
-      <button class="chat-send-btn" onclick="handleSendChat()">SEND</button>
-    </div>
-  </section>
+  </div>
 
   <div class="footer-note">
     BALLISTIC AI — runs fully in your browser. Nothing you upload leaves this page.<br>
@@ -544,13 +543,23 @@ function looksLikeDate(v){
   return !Number.isNaN(t);
 }
 
+function parseLooseNumber(v){
+  if (typeof v === 'number') return v;
+  if (typeof v !== 'string') return NaN;
+  const s = v.trim();
+  if (s === '') return NaN;
+  const stripped = s.replace(/[₦$£€,]/g,'').replace(/%$/,'').trim();
+  if (!/^-?\d+(\.\d+)?$/.test(stripped)) return NaN;
+  return parseFloat(stripped);
+}
+
 function detectColumnType(values){
   const nonMissing = values.filter(v => !isMissing(v));
   if (nonMissing.length === 0) return {type:'categorical'};
   let numericCount = 0, dateCount = 0;
   nonMissing.forEach(v=>{
-    const n = typeof v === 'number' ? v : parseFloat(v);
-    if (!Number.isNaN(n) && /^-?\d+(\.\d+)?$/.test(String(v).trim())) numericCount++;
+    const n = parseLooseNumber(v);
+    if (!Number.isNaN(n)) numericCount++;
     else if (looksLikeDate(v)) dateCount++;
   });
   const frac = nonMissing.length;
@@ -564,6 +573,11 @@ function uniqueCount(values){
 }
 
 function mean(arr){ return arr.reduce((a,b)=>a+b,0)/(arr.length||1); }
+function median(arr){
+  const s = arr.slice().sort((a,b)=>a-b);
+  const mid = Math.floor(s.length/2);
+  return s.length%2 ? s[mid] : (s[mid-1]+s[mid])/2;
+}
 function mode(arr){
   const counts = {};
   let best=null,bestC=-1;
@@ -573,6 +587,68 @@ function mode(arr){
 function stddev(arr){
   const m = mean(arr);
   return Math.sqrt(mean(arr.map(v=>(v-m)*(v-m))));
+}
+
+function computeOutliers(nums){
+  if (nums.length < 4) return {count:0, lower:-Infinity, upper:Infinity, q1:null, q3:null};
+  const sorted = nums.slice().sort((a,b)=>a-b);
+  const q = p => {
+    const idx = (sorted.length-1)*p;
+    const lo = Math.floor(idx), hi = Math.ceil(idx);
+    return sorted[lo] + (sorted[hi]-sorted[lo])*(idx-lo);
+  };
+  const q1 = q(0.25), q3 = q(0.75);
+  const iqr = q3 - q1;
+  const lower = q1 - 1.5*iqr, upper = q3 + 1.5*iqr;
+  const count = nums.filter(n=>n<lower||n>upper).length;
+  return {count, lower, upper, q1, q3};
+}
+
+function buildCategoryCanonicalMap(values){
+  const groups = {};
+  values.forEach(v=>{
+    if (isMissing(v)) return;
+    const key = String(v).trim().toLowerCase();
+    groups[key] = groups[key] || {};
+    groups[key][v] = (groups[key][v]||0)+1;
+  });
+  const map = {};
+  let mergedAny = false;
+  Object.keys(groups).forEach(key=>{
+    const variants = groups[key];
+    const variantNames = Object.keys(variants);
+    if (variantNames.length > 1) mergedAny = true;
+    const canonical = variantNames.sort((a,b)=>variants[b]-variants[a])[0];
+    variantNames.forEach(v=> map[v] = canonical);
+  });
+  return {map, mergedAny};
+}
+
+function dedupeRows(rows, headers){
+  const seen = new Set();
+  const out = [];
+  let removed = 0;
+  rows.forEach(r=>{
+    const key = headers.map(h=>String(r[h])).join('\u241F');
+    if (seen.has(key)){ removed++; return; }
+    seen.add(key);
+    out.push(r);
+  });
+  return {rows: out, removed};
+}
+
+function normalizeCell(v){
+  return typeof v === 'string' ? v.trim().replace(/\s+/g,' ') : v;
+}
+
+function minMax(arr){
+  let min = Infinity, max = -Infinity;
+  for (let i=0;i<arr.length;i++){
+    const v = arr[i];
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  return {min, max};
 }
 
 function shuffle(arr){
@@ -597,9 +673,7 @@ function goToStage(stage){
     el.classList.toggle('done', i<idx);
   });
   const pct = idx / (STAGES.length-1);
-  const pathLen = 900; // approximation, path is visually ~900 long incl curve
   document.getElementById('traj-progress').setAttribute('stroke-dasharray', (pct*1000)+' 2000');
-  // move marker along a simple quadratic bezier approx
   const t = pct;
   const x0=40,y0=55,cx=450,cy=-10,x1=860,y1=55;
   const mx = (1-t)*(1-t)*x0 + 2*(1-t)*t*cx + t*t*x1;
@@ -642,11 +716,18 @@ function handleFile(file){
     skipEmptyLines:true,
     dynamicTyping:false,
     complete: (results)=>{
-      state.rawRows = results.data;
-      state.headers = results.meta.fields;
+      const headers = results.meta.fields;
+      const normalized = results.data.map(r=>{
+        const nr = {};
+        headers.forEach(h=> nr[h] = normalizeCell(r[h]));
+        return nr;
+      });
+      const {rows, removed} = dedupeRows(normalized, headers);
+      state.rawRows = rows;
+      state.headers = headers;
+      state.duplicatesRemoved = removed;
       profileColumns();
       renderIntake();
-      addAssistantMessage(`System confirmed parsing completed: **${state.rawRows.length} rows** across **${state.headers.length} data columns** are now successfully staged.`);
     },
     error: (err)=>{ alert('Could not parse that file: '+err); }
   });
@@ -659,23 +740,29 @@ function profileColumns(){
     const det = detectColumnType(values);
     const missing = values.filter(isMissing).length;
     const uniq = uniqueCount(values);
-    state.columns[h] = {
+    const info = {
       type: det.type,
       missing,
       missingFrac: missing/(values.length||1),
       unique: uniq,
       isIdLike: uniq === values.length && values.length > 5,
-      isConstant: uniq <= 1
+      isConstant: uniq <= 1,
+      highCardinality: det.type === 'categorical' && (uniq > 30 || uniq > values.length*0.3)
     };
+    if (det.type === 'numeric'){
+      const nums = values.filter(v=>!isMissing(v)).map(parseLooseNumber).filter(n=>!Number.isNaN(n));
+      info.outliers = computeOutliers(nums);
+    }
+    state.columns[h] = info;
   });
 }
 
 function renderIntake(){
   document.getElementById('intake-summary').classList.remove('hidden');
   document.getElementById('intake-stats').textContent =
-    `${state.rawRows.length} rows  ·  ${state.headers.length} columns`;
+    `${state.rawRows.length} rows  ·  ${state.headers.length} columns` +
+    (state.duplicatesRemoved ? `  ·  ${state.duplicatesRemoved} exact duplicate row(s) removed on load` : '');
 
-  // preview table (first 8 rows)
   const table = document.getElementById('preview-table');
   let html = '<thead><tr>' + state.headers.map(h=>`<th>${h}</th>`).join('') + '</tr></thead><tbody>';
   state.rawRows.slice(0,8).forEach(r=>{
@@ -684,7 +771,6 @@ function renderIntake(){
   html += '</tbody>';
   table.innerHTML = html;
 
-  // column profile
   const wrap = document.getElementById('column-profile');
   wrap.innerHTML = '<div style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">COLUMN PROFILE</div>' +
     state.headers.map(h=>{
@@ -694,6 +780,8 @@ function renderIntake(){
       else if (c.missingFrac>0.5) flags += ' <span style="color:var(--danger);font-size:11px;">· mostly missing, will drop</span>';
       else if (c.isIdLike) flags += ' <span style="color:var(--text-dim);font-size:11px;">· looks like an identifier</span>';
       else if (c.missing>0) flags += ` <span style="color:var(--text-dim);font-size:11px;">· ${c.missing} missing</span>`;
+      if (c.outliers && c.outliers.count>0) flags += ` <span style="color:var(--brass);font-size:11px;">· ${c.outliers.count} outlier(s) (IQR)</span>`;
+      if (c.highCardinality) flags += ` <span style="color:var(--text-dim);font-size:11px;">· high-cardinality (${c.unique} categories)</span>`;
       return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;font-size:13px;">
         <span class="tag ${c.type}">${c.type}</span>
         <span><b>${h}</b></span>
@@ -717,6 +805,7 @@ document.getElementById('btn-run-calibration').addEventListener('click', runCali
 function runCalibration(){
   const log = [];
   const keepCols = [];
+  const capOutliers = document.getElementById('chk-cap-outliers').checked;
   const cleaned = state.rawRows.map(r=>({...r}));
 
   state.headers.forEach(h=>{
@@ -730,14 +819,27 @@ function runCalibration(){
       return;
     }
     keepCols.push(h);
+
+    if (c.type === 'categorical'){
+      const rawVals = state.rawRows.map(r=>r[h]);
+      const {map, mergedAny} = buildCategoryCanonicalMap(rawVals);
+      if (mergedAny){
+        cleaned.forEach(r=>{ if(!isMissing(r[h])) r[h] = map[r[h]] ?? r[h]; });
+        log.push({type:'ok', text:`Normalized "<b>${h}</b>" — merged category spellings that only differed by case or spacing.`});
+      }
+    }
+
     if (c.missing > 0){
       if (c.type === 'numeric'){
-        const vals = state.rawRows.map(r=>parseFloat(r[h])).filter(v=>!Number.isNaN(v));
-        const m = mean(vals);
-        cleaned.forEach(r=>{ if(isMissing(r[h])) r[h] = m; });
-        log.push({type:'ok', text:`Filled ${c.missing} missing value(s) in "<b>${h}</b>" with the column mean (${m.toFixed(2)}).`});
+        const vals = cleaned.map(r=>parseLooseNumber(r[h])).filter(v=>!Number.isNaN(v));
+        const hasOutliers = c.outliers && c.outliers.count > 0;
+        const stat = hasOutliers ? median(vals) : mean(vals);
+        const statName = hasOutliers ? 'median' : 'mean';
+        cleaned.forEach(r=>{ if(isMissing(r[h])) r[h] = stat; });
+        const reason = hasOutliers ? ' (used the median here, not the mean, since this column has outliers that would otherwise skew the average)' : '';
+        log.push({type:'ok', text:`Filled ${c.missing} missing value(s) in "<b>${h}</b>" with the column ${statName} (${stat.toFixed(2)})${reason}.`});
       } else {
-        const vals = state.rawRows.map(r=>r[h]).filter(v=>!isMissing(v));
+        const vals = cleaned.map(r=>r[h]).filter(v=>!isMissing(v));
         const md = mode(vals);
         cleaned.forEach(r=>{ if(isMissing(r[h])) r[h] = md; });
         log.push({type:'ok', text:`Filled ${c.missing} missing value(s) in "<b>${h}</b>" with the most common value ("${md}").`});
@@ -745,8 +847,21 @@ function runCalibration(){
     } else {
       log.push({type:'ok', text:`"<b>${h}</b>" — clean, no missing values.`});
     }
-    if (c.isIdLike){
-      log.push({type:'', text:`"<b>${h}</b>" looks like an identifier (all unique values) — excluded from features by default.`});
+
+    if (c.type === 'numeric' && c.outliers && c.outliers.count > 0){
+      if (capOutliers){
+        const {lower, upper} = c.outliers;
+        let cappedCount = 0;
+        cleaned.forEach(r=>{
+          const n = parseLooseNumber(r[h]);
+          if (Number.isNaN(n)) return;
+          if (n < lower){ r[h] = lower; cappedCount++; }
+          else if (n > upper){ r[h] = upper; cappedCount++; }
+        });
+        log.push({type:'ok', text:`Capped ${cappedCount} extreme value(s) in "<b>${h}</b>" to the IQR bound [${lower.toFixed(2)}, ${upper.toFixed(2)}].`});
+      } else {
+        log.push({type:'warn', text:`"<b>${h}</b>" has ${c.outliers.count} value(s) outside the normal IQR range — left as-is. Tick "cap extreme outliers" above and re-run if you want these pulled in.`});
+      }
     }
   });
 
@@ -754,12 +869,18 @@ function runCalibration(){
   state.keepCols = keepCols;
   state.cleaningLog = log;
 
+  keepCols.forEach(h=>{
+    if (state.columns[h].type === 'numeric'){
+      const nums = cleaned.map(r=>parseLooseNumber(r[h])).filter(v=>!Number.isNaN(v));
+      state.columns[h].outliers = computeOutliers(nums);
+    }
+  });
+
   const logDiv = document.getElementById('calibration-log');
   logDiv.innerHTML = log.map(l=>`<div class="log-line ${l.type}">${l.text}</div>`).join('');
   document.getElementById('calibrate-next').classList.remove('hidden');
 
   buildTargetSelector();
-  addAssistantMessage(`Calibration finished. Null value replacement strategy has been deployed. High missing values or unique static columns dropped cleanly to protect learning capacity.`);
 }
 
 document.getElementById('btn-to-train').addEventListener('click', ()=>goToStage('train'));
@@ -777,7 +898,7 @@ function buildTargetSelector(){
 function inferTask(colName){
   const c = state.columns[colName];
   if (c.type === 'numeric'){
-    const vals = state.cleanedRows.map(r=>parseFloat(r[colName]));
+    const vals = state.cleanedRows.map(r=>parseLooseNumber(r[colName]));
     const allInt = vals.every(v=>Number.isInteger(v));
     if (c.unique <= 10 && allInt) return 'classification';
     return 'regression';
@@ -817,6 +938,8 @@ function onTargetChange(){
 function updateTaskNote(auto){
   const note = document.getElementById('task-note');
   const wrap = document.getElementById('feature-picker-wrap');
+  const imbalanceNote = document.getElementById('imbalance-note');
+  imbalanceNote.textContent = '';
   if (state.taskType === 'timeseries'){
     note.textContent = `Ballistic AI will build lag features from "${state.target}" (using row order) and forecast forward — other columns are ignored in this mode.`;
     wrap.classList.add('hidden');
@@ -825,6 +948,27 @@ function updateTaskNote(auto){
       ? `Auto-detected as ${auto} based on the values in "${state.target}".`
       : `Overriding the auto-detected type (${auto}).`;
     wrap.classList.remove('hidden');
+    if (state.taskType === 'classification') checkClassImbalance();
+  }
+}
+
+function getMajorityClass(){
+  const vals = state.cleanedRows.map(r=>String(r[state.target]));
+  const counts = {};
+  vals.forEach(v=>counts[v]=(counts[v]||0)+1);
+  const total = vals.length;
+  const entries = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+  const [topLabel, topCount] = entries[0];
+  return {topLabel, topFrac: topCount/total, numClasses: entries.length};
+}
+
+function checkClassImbalance(){
+  const {topLabel, topFrac, numClasses} = getMajorityClass();
+  const note = document.getElementById('imbalance-note');
+  if (topFrac > 0.8 && numClasses > 1){
+    note.textContent = `⚠ Class imbalance: "${topLabel}" makes up ${(topFrac*100).toFixed(0)}% of rows. A model that always guesses "${topLabel}" would already score ${(topFrac*100).toFixed(0)}% accuracy without learning anything — treat the accuracy metric on the Impact page with that in mind.`;
+  } else {
+    note.textContent = '';
   }
 }
 
@@ -833,10 +977,14 @@ function renderFeaturePicker(){
   if (state.taskType === 'timeseries'){ wrap.innerHTML=''; return; }
   const candidates = state.keepCols.filter(h=>h!==state.target);
   wrap.innerHTML = candidates.map(h=>{
-    const idLike = state.columns[h].isIdLike;
+    const col = state.columns[h];
+    const excludeByDefault = col.isIdLike || col.highCardinality;
+    let note = '';
+    if (col.isIdLike) note = ' <span style="color:var(--text-dim);font-size:11px;">(identifier — unchecked by default)</span>';
+    else if (col.highCardinality) note = ' <span style="color:var(--text-dim);font-size:11px;">(high-cardinality — unchecked by default)</span>';
     return `<div class="checkrow">
-      <input type="checkbox" value="${h}" ${idLike?'':'checked'} id="feat-${h}">
-      <label for="feat-${h}">${h} <span class="tag ${state.columns[h].type}" style="margin-left:6px;">${state.columns[h].type}</span>${idLike?' <span style="color:var(--text-dim);font-size:11px;">(identifier — unchecked by default)</span>':''}</label>
+      <input type="checkbox" value="${h}" ${excludeByDefault?'':'checked'} id="feat-${h}">
+      <label for="feat-${h}">${h} <span class="tag ${col.type}" style="margin-left:6px;">${col.type}</span>${note}</label>
     </div>`;
   }).join('');
 }
@@ -856,10 +1004,10 @@ function buildEncoder(colName, rows){
   const type = state.columns[colName].type;
   const raw = rows.map(r=>r[colName]);
   if (type === 'numeric' || type === 'date'){
-    const nums = type === 'date' ? raw.map(v=>new Date(v).getTime()) : raw.map(v=>parseFloat(v));
-    const min = Math.min(...nums), max = Math.max(...nums);
+    const nums = type === 'date' ? raw.map(v=>new Date(v).getTime()) : raw.map(v=>parseLooseNumber(v));
+    const {min, max} = minMax(nums);
     return {type:'numeric', min, max, encode:(v)=>{
-      const n = type==='date' ? new Date(v).getTime() : parseFloat(v);
+      const n = type==='date' ? new Date(v).getTime() : parseLooseNumber(v);
       return max>min ? (n-min)/(max-min) : 0;
     }};
   }
@@ -874,7 +1022,7 @@ function encodeFeatureRow(row, featureCols, encoders){
   return featureCols.map(h=>encoders[h].encode(row[h]));
 }
 
-/* ---- training: classification / regression ---- */
+/* ---- training ---- */
 
 async function launchTraining(){
   const epochs = parseInt(document.getElementById('epochs-slider').value);
@@ -894,7 +1042,6 @@ async function launchTraining(){
 
   document.getElementById('btn-launch-training').disabled = false;
   document.getElementById('train-next').classList.remove('hidden');
-  addAssistantMessage(`Model processing completed successfully across **${epochs} training epochs**. Optimization weights are adjusted. Head over to the **Impact** panel to analyze validation accuracy graphs.`);
 }
 
 async function trainTabular(epochs, testFrac){
@@ -928,8 +1075,8 @@ async function trainTabular(epochs, testFrac){
     yTrain = trainIdx.map(i=>oneHot[i]);
     yTest = testIdx.map(i=>oneHot[i]);
   } else {
-    const vals = rows.map(r=>parseFloat(r[state.target]));
-    const min = Math.min(...vals), max = Math.max(...vals);
+    const vals = rows.map(r=>parseLooseNumber(r[state.target]));
+    const {min, max} = minMax(vals);
     targetEncoder = {type:'regression', min, max};
     outputUnits = 1;
     lossFn = 'meanSquaredError';
@@ -975,11 +1122,11 @@ async function trainTabular(epochs, testFrac){
 
 async function trainTimeSeries(epochs, testFrac){
   const rows = state.cleanedRows;
-  const series = rows.map(r=>parseFloat(r[state.target]));
+  const series = rows.map(r=>parseLooseNumber(r[state.target]));
   const lag = Math.min(5, Math.max(2, Math.floor(series.length/6)));
   state.lagCount = lag;
 
-  const min = Math.min(...series), max = Math.max(...series);
+  const {min, max} = minMax(series);
   const norm = series.map(v=> max>min ? (v-min)/(max-min) : 0);
   state.targetEncoder = {type:'regression', min, max};
 
@@ -1075,6 +1222,7 @@ document.getElementById('btn-to-impact').addEventListener('click', ()=>{
   if (state.taskType !== 'timeseries') renderImpactTabular();
   renderImportance();
   renderPredictForm();
+  generateExplanation();
 });
 
 /* ============================ STAGE 4: IMPACT ============================ */
@@ -1144,6 +1292,7 @@ function renderImpactTimeSeries(){
   `;
   renderForecastChart([]);
   renderImportance();
+  generateExplanation();
 }
 
 function renderConfusionMatrix(){
@@ -1181,7 +1330,7 @@ function renderRegressionChart(){
   const ctx = document.getElementById('resultChart').getContext('2d');
   const {actualRaw, predRaw} = state.testSet;
   const points = actualRaw.map((a,i)=>({x:a,y:predRaw[i]}));
-  const lo = Math.min(...actualRaw, ...predRaw), hi = Math.max(...actualRaw, ...predRaw);
+  const {min: lo, max: hi} = minMax(actualRaw.concat(predRaw));
   if (state.resultChart) state.resultChart.destroy();
   state.resultChart = new Chart(ctx, {
     type:'scatter',
@@ -1233,17 +1382,107 @@ document.getElementById('btn-run-forecast').addEventListener('click', ()=>{
   const forecastRaw = forecastNorm.map(v=> v*(max-min)+min);
   state.lastForecast = forecastRaw;
   renderForecastChart(forecastRaw);
+  generateExplanation();
 });
 
-/* ---- feature importance (first-layer weight magnitude proxy) ---- */
+/* ---- plain-language explainer ---- */
+
+function r2Descriptor(r2){
+  if (r2 >= 0.9) return {label:'excellent', text:'the model captures almost all of the pattern in your data'};
+  if (r2 >= 0.7) return {label:'strong', text:'the model has a solid handle on what drives changes in this number'};
+  if (r2 >= 0.5) return {label:'moderate', text:'the model has found a real pattern, but a fair amount of the variation is still unexplained'};
+  if (r2 >= 0.2) return {label:'weak', text:"the model's connection to the target is loose — treat its predictions as rough estimates, not firm numbers"};
+  return {label:'very weak', text:"the model isn't finding a meaningful pattern with the columns you gave it — more data, different features, or a different target might help"};
+}
+
+function confidenceDescriptor(frac){
+  if (frac >= 0.85) return 'high confidence';
+  if (frac >= 0.6) return 'moderate confidence';
+  return "low confidence — the model isn't very sure here, so treat it as a guess";
+}
+
+function findMostConfusedPair(cm, cats){
+  let best = null, bestCount = 0;
+  cats.forEach(a=> cats.forEach(b=>{
+    if (a===b) return;
+    if (cm[a][b] > bestCount){ bestCount = cm[a][b]; best = [a,b]; }
+  }));
+  return best ? {from:best[0], to:best[1], count:bestCount} : null;
+}
+
+function topFeatureSentence(){
+  if (!state.featureImportance || state.featureImportance.length === 0) return '';
+  const top = state.featureImportance.slice(0, Math.min(2, state.featureImportance.length));
+  const names = top.map(f=>`"${f.name}"`).join(' and ');
+  return ` To make its predictions, the model leaned most heavily on ${names}.`;
+}
+
+function generateExplanation(){
+  const el = document.getElementById('plain-explainer');
+  if (!el) return;
+  let html = '';
+
+  if (state.taskType === 'classification'){
+    const m = state.metrics;
+    const {topFrac} = getMajorityClass();
+    const baselinePct = (topFrac*100).toFixed(0);
+    const accPct = (m.accuracy*100).toFixed(0);
+    let compareLine;
+    if (m.accuracy > topFrac + 0.05){
+      compareLine = `That's meaningfully better than just always guessing the most common category (which would get it right about ${baselinePct}% of the time) — so it has genuinely learned something from the data.`;
+    } else if (m.accuracy > topFrac - 0.03){
+      compareLine = `That's about the same as always guessing the most common category (${baselinePct}%) — so treat this model with caution; it may not be picking up a real pattern yet.`;
+    } else {
+      compareLine = `That's actually worse than simply guessing the most common category every time (${baselinePct}%) — something is likely off with the features chosen or the amount of data available.`;
+    }
+    let confusionLine = '';
+    const pair = findMostConfusedPair(m.cm, m.cats);
+    if (pair){
+      confusionLine = ` Its most common mistake is predicting "${pair.to}" when the real answer was "${pair.from}" (${pair.count} time${pair.count===1?'':'s'} in the test data).`;
+    }
+    html = `<p>Out of every 100 predictions on data it hadn't seen before, this model gets about <b>${accPct} right</b>. ${compareLine}${confusionLine}${topFeatureSentence()}</p>`;
+
+  } else if (state.taskType === 'regression'){
+    const m = state.metrics;
+    const desc = r2Descriptor(m.r2);
+    const targetVals = state.testSet.actualRaw;
+    const avgTarget = mean(targetVals);
+    const pctOfAvg = avgTarget !== 0 ? Math.abs(m.rmse/avgTarget*100).toFixed(0) : null;
+    const rmseLine = pctOfAvg !== null
+      ? `On a typical unseen row, predictions for "${state.target}" are off by about <b>${m.rmse.toFixed(2)}</b> — roughly ${pctOfAvg}% of a typical value.`
+      : `On a typical unseen row, predictions for "${state.target}" are off by about <b>${m.rmse.toFixed(2)}</b>.`;
+    html = `<p>This model's fit is <b>${desc.label}</b> — ${desc.text}. ${rmseLine}${topFeatureSentence()}</p>`;
+
+  } else if (state.taskType === 'timeseries'){
+    const m = state.metrics;
+    const desc = r2Descriptor(m.r2);
+    let trendLine = '';
+    if (state.lastForecast && state.lastForecast.length > 1){
+      const f = state.lastForecast;
+      const delta = f[f.length-1] - f[0];
+      const pct = f[0] !== 0 ? (delta/Math.abs(f[0])*100) : 0;
+      if (Math.abs(pct) < 3) trendLine = ` Looking ahead, the forecast expects "${state.target}" to stay roughly flat.`;
+      else if (pct > 0) trendLine = ` Looking ahead, the forecast expects "${state.target}" to trend upward by roughly ${pct.toFixed(0)}% over the forecast window.`;
+      else trendLine = ` Looking ahead, the forecast expects "${state.target}" to trend downward by roughly ${Math.abs(pct).toFixed(0)}% over the forecast window.`;
+    }
+    html = `<p>This forecasting model's fit on past data is <b>${desc.label}</b> — ${desc.text}, based on the last ${state.lagCount} values each time. Typical predictions are off by about <b>${m.rmse.toFixed(2)}</b>.${trendLine}</p>`;
+  }
+
+  el.innerHTML = html;
+}
+
+/* ---- feature importance ---- */
 
 function renderImportance(){
+  if(!state.model) return;
   const layer0 = state.model.layers[0];
-  const weights = layer0.getWeights()[0]; // shape [nFeatures, units]
+  const weights = layer0.getWeights()[0];
   const data = weights.arraySync();
   const importance = data.map(row => row.reduce((s,v)=>s+Math.abs(v),0));
   const total = importance.reduce((a,b)=>a+b,0) || 1;
   const normImportance = importance.map(v=> v/total);
+  state.featureImportance = state.featureCols.map((h,i)=>({name:h, value:normImportance[i]}))
+    .sort((a,b)=>b.value-a.value);
 
   const ctx = document.getElementById('importanceChart').getContext('2d');
   if (state.importanceChart) state.importanceChart.destroy();
@@ -1265,7 +1504,7 @@ function renderPredictForm(){
   wrap.innerHTML = state.featureCols.map(h=>{
     const c = state.columns[h];
     if (c.type === 'numeric'){
-      const vals = rows.map(r=>parseFloat(r[h]));
+      const vals = rows.map(r=>parseLooseNumber(r[h]));
       const avg = mean(vals).toFixed(2);
       return `<div><label class="field-label">${h}</label><input type="number" step="any" id="pred-${h}" value="${avg}"></div>`;
     }
@@ -1285,17 +1524,21 @@ document.getElementById('btn-predict').addEventListener('click', ()=>{
   const t = tf.tensor2d([input]);
   const predT = state.model.predict(t);
   const out = predT.dataSync();
-  let display;
+  let display, note;
   if (state.taskType === 'classification'){
     const cats = state.targetEncoder.categories;
     const idx = out.indexOf(Math.max(...out));
     display = `${cats[idx]}  <span style="font-size:14px;color:var(--text-dim);">(${(out[idx]*100).toFixed(1)}% confidence)</span>`;
+    note = `That's ${confidenceDescriptor(out[idx])} — this model is right about ${(state.metrics.accuracy*100).toFixed(0)}% of the time overall, so weigh this prediction against that baseline.`;
   } else {
     const {min,max} = state.targetEncoder;
     display = (out[0]*(max-min)+min).toFixed(3);
+    const desc = r2Descriptor(state.metrics.r2);
+    note = `Typical predictions from this model are off by about ${state.metrics.rmse.toFixed(2)} (fit quality: ${desc.label}) — treat this as an estimate, not an exact figure.`;
   }
   document.getElementById('readout').classList.remove('hidden');
   document.getElementById('readout-val').innerHTML = display;
+  document.getElementById('readout-note').textContent = note;
   t.dispose(); predT.dispose();
 });
 
@@ -1306,83 +1549,80 @@ document.getElementById('btn-start-over').addEventListener('click', ()=>{
   location.reload();
 });
 
-/* ==================== CHATBOX ENGINE JS UPGRADES ==================== */
-function addAssistantMessage(text) {
-  const container = document.getElementById('chat-logs');
+/* ============================ CO-PILOT CHAT LOGIC ============================ */
+const chatWidget = document.getElementById('chatWidget');
+const chatHeader = document.getElementById('chatHeader');
+const chatToggleBtn = document.getElementById('chatToggleBtn');
+const chatBody = document.getElementById('chatBody');
+const chatInput = document.getElementById('chatInput');
+const chatSendBtn = document.getElementById('chatSendBtn');
+
+chatHeader.addEventListener('click', () => {
+  const isMin = chatWidget.classList.toggle('minimized');
+  chatToggleBtn.textContent = isMin ? '+' : '−';
+  if(!isMin) {
+    setTimeout(() => chatInput.focus(), 100);
+  }
+});
+
+function appendMessage(text, sender) {
   const msg = document.createElement('div');
-  msg.className = 'chat-msg assistant';
-  msg.innerHTML = parseMiniMarkdown(text);
-  container.appendChild(msg);
-  container.scrollTop = container.scrollHeight;
+  msg.className = `chat-msg ${sender}`;
+  msg.innerHTML = text;
+  chatBody.appendChild(msg);
+  chatBody.scrollTop = chatBody.scrollHeight;
 }
 
-function addUserMessage(text) {
-  const container = document.getElementById('chat-logs');
-  const msg = document.createElement('div');
-  msg.className = 'chat-msg user';
-  msg.innerText = text;
-  container.appendChild(msg);
-  container.scrollTop = container.scrollHeight;
-}
+function processChat() {
+  const query = chatInput.value.trim().toLowerCase();
+  if(!query) return;
 
-function parseMiniMarkdown(t) {
-  return t.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/`(.*?)`/g, '<code>$1</code>');
-}
+  appendMessage(chatInput.value, 'user');
+  chatInput.value = '';
 
-function sendPreset(topic) {
-  addUserMessage(`Requesting info: ${topic}`);
   setTimeout(() => {
-    let reply = "";
-    if (!state.rawRows || state.rawRows.length === 0) {
-      reply = "No telemetry file has been dragged into Stage 1 yet. Drop a CSV into **Intake** to unlock automated engineering reviews.";
-      addAssistantMessage(reply);
-      return;
-    }
+    let reply = "I'm monitoring the model training environment. Ask me things like 'status', 'metrics', 'columns', or 'pipeline'.";
     
-    if (topic === 'Optimize Pipeline') {
-      reply = `**Data Optimization Analysis:** Your data configuration contains **${state.headers.length} properties**. Columns like identifier strings or invariant constants are filtered out dynamically during Stage 2. If processing a regression, check for outliers before firing epochs.`;
-    } else if (topic === 'Model Design Summary') {
-      const selectedType = state.taskType || "unselected";
-      reply = `**Architecture Topology:** Ballistic AI sets up an input layer with **${state.featureCols.length || 'N/A'} feature neurons**, stepping down through a 16-unit ReLU layer followed by an 8-unit hidden layer. The final layer matches the **${selectedType}** configuration dynamically.`;
-    } else if (topic === 'Interpret Performance Metrics') {
-      if (!state.model) {
-        reply = "Training has not been executed yet. Head over to Stage 3 and click **Launch training** to populate performance metrics.";
+    if (query.includes('status') || query.includes('pipeline') || query.includes('stage')) {
+      reply = `We are currently at the <b>${currentStage.toUpperCase()}</b> phase. `;
+      if (state.rawRows.length === 0) {
+        reply += "No data has been loaded yet. Drop a CSV into Stage 1 to ignite processing.";
+      } else if (state.cleanedRows.length === 0) {
+        reply += `Data loaded successfully (${state.rawRows.length} items). Run calibration next.`;
+      } else if (!state.model) {
+        reply += "Data calibration finished. Ready to configure network parameters and launch training.";
       } else {
-        const type = state.metrics.type;
-        if (type === 'classification') {
-          reply = `**Diagnostic Review:** The classifier achieved **${(state.metrics.accuracy * 100).toFixed(1)}% validation accuracy** over the test rows. Evaluate the confusion matrix matrix diagonally to pinpoint cross-class leakages.`;
-        } else {
-          reply = `**Diagnostic Review:** The regression layer generated an **R² metric of ${state.metrics.r2.toFixed(3)}** with an RMSE scale of **${state.metrics.rmse.toFixed(2)}**. Verify if loss drops cleanly on the line graph.`;
-        }
+        reply += "Model pipeline executed. Impact report summary is live at the bottom of the dashboard.";
+      }
+    } 
+    else if (query.includes('metric') || query.includes('score') || query.includes('r2') || query.includes('accuracy')) {
+      if (!state.metrics || Object.keys(state.metrics).length === 0) {
+        reply = "Metrics are uncalculated. Complete the pipeline training sequence to see model results.";
+      } else if (state.metrics.type === 'classification') {
+        reply = `Classification scoring complete: <br>• <b>Accuracy:</b> ${(state.metrics.accuracy * 100).toFixed(1)}%<br>• <b>Classes Found:</b> ${state.metrics.cats.length}`;
+      } else {
+        reply = `Regression scoring complete: <br>• <b>R²:</b> ${state.metrics.r2.toFixed(4)}<br>• <b>RMSE:</b> ${state.metrics.rmse.toFixed(2)}`;
       }
     }
-    addAssistantMessage(reply);
+    else if (query.includes('column') || query.includes('feature') || query.includes('data')) {
+      if (state.headers.length === 0) {
+        reply = "Data pool empty. Please upload a target dataset to evaluate column properties.";
+      } else {
+        reply = `Detected <b>${state.headers.length} columns</b>: <br>` + state.headers.map(h => {
+          const c = state.columns[h];
+          return `• <code>${h}</code> (${c ? c.type : 'unknown'})`;
+        }).join('<br>');
+      }
+    }
+    
+    appendMessage(reply, 'assistant');
   }, 400);
 }
 
-function handleSendChat() {
-  const inputEl = document.getElementById('chat-input');
-  const query = inputEl.value.trim();
-  if (!query) return;
-  
-  addUserMessage(query);
-  inputEl.value = '';
-  
-  setTimeout(() => {
-    let response = "Interesting query! I am tracking your active data pipeline metrics above. You can adjust training epochs, pick different target keys, or check feature importances to optimize behavior.";
-    const qLower = query.toLowerCase();
-    
-    if (qLower.includes('predict') || qLower.includes('target')) {
-      response = `Currently, the workspace is set to isolate **"${state.target || 'None Selected'}"** as the target vector using a **${state.taskType || 'pending'}** architecture blueprint.`;
-    } else if (qLower.includes('loss') || qLower.includes('epoch') || qLower.includes('train')) {
-      response = `Your system is set to scale up to **${document.getElementById('epochs-slider').value} epochs**. If validation loss breaks upward while training loss plunges, lower the epoch ceiling to mitigate overfitting risks.`;
-    } else if (state.rawRows.length > 0 && (qLower.includes('data') || qLower.includes('column'))) {
-      response = `Your live intake table holds **${state.rawRows.length} total frames** and features include: \`${state.featureCols.join(', ')}\`.`;
-    }
-    
-    addAssistantMessage(response);
-  }, 500);
-}
+chatSendBtn.addEventListener('click', processChat);
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') processChat();
+});
 
 /* init tracker position */
 goToStage('intake');
